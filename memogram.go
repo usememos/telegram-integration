@@ -19,6 +19,7 @@ import (
 // userAccessTokenCache is a cache for user access token.
 // Key is the user id from telegram.
 // Value is the access token from memos.
+// TODO: save it to a persistent storage.
 var userAccessTokenCache sync.Map // map[int64]string
 
 type Service struct {
@@ -45,7 +46,7 @@ func NewService() (*Service, error) {
 	}, nil
 }
 
-func (s *Service) Start() {
+func (s *Service) Start(ctx context.Context) {
 	config, err := getConfigFromEnv()
 	if err != nil {
 		slog.Error("failed to get config from env", slog.Any("err", err))
@@ -63,8 +64,7 @@ func (s *Service) Start() {
 	}
 
 	slog.Info("memogram started")
-
-	b.Start(context.Background())
+	b.Start(ctx)
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
@@ -83,6 +83,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	}
 
 	message := m.Message
+	// TODO: handle message.Entities to get markdown text.
 	text := message.Text
 	if text == "" {
 		b.SendMessage(ctx, &bot.SendMessageParams{

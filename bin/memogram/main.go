@@ -1,11 +1,16 @@
 package main
 
-import "github.com/usememos/memogram"
+import (
+	"context"
+
+	"github.com/usememos/memogram"
+)
 
 func main() {
+	ctx := context.Background()
 	service, err := memogram.NewService()
 	if err != nil {
 		panic(err)
 	}
-	service.Start()
+	service.Start(ctx)
 }
