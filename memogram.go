@@ -84,9 +84,12 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 
 	message := m.Message
 	// TODO: handle message.Entities to get markdown text.
-	text := message.Text
+	content := message.Text
+	if message.Caption != "" {
+		content = message.Caption
+	}
 	hasResource := message.Document != nil || len(message.Photo) > 0
-	if text == "" && !hasResource {
+	if content == "" && !hasResource {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
 			Text:   "Please input memo content",
@@ -97,7 +100,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	accessToken, _ := userAccessTokenCache.Load(userID)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken.(string))))
 	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
-		Content: text,
+		Content: content,
 	})
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
