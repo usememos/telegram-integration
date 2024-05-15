@@ -1,6 +1,6 @@
 # Memogram
 
-**Memogram** is a Go-based Telegram bot designed to store Telegram messages and files into [Memos](https://usememos.com/). It's easy to use and supports saving text, images, and files.
+**Memogram** is an easy to use integration service for syncing messages and images from a Telegram bot into your Memos.
 
 ## Prerequisites
 
