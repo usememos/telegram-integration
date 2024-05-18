@@ -20,8 +20,7 @@ SERVER_ADDR=dns:localhost:5230
 BOT_TOKEN=your_telegram_bot_token
 ```
 
-The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution
-](https://github.com/grpc/grpc/blob/master/doc/naming.md).
+The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution](https://github.com/grpc/grpc/blob/master/doc/naming.md).
 
 ## Usage
 
