@@ -64,6 +64,13 @@ func NewService() (*Service, error) {
 
 func (s *Service) Start(ctx context.Context) {
 	slog.Info("Memogram started")
+	// Try to get workspace profile.
+	workspaceProfile, err := s.client.WorkspaceService.GetWorkspaceProfile(ctx, &v1pb.GetWorkspaceProfileRequest{})
+	if err != nil {
+		slog.Error("failed to get workspace profile", slog.Any("err", err))
+		return
+	}
+	slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
 	s.bot.Start(ctx)
 }
 

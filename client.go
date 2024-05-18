@@ -6,17 +6,19 @@ import (
 )
 
 type MemosClient struct {
-	AuthService     v1pb.AuthServiceClient
-	UserService     v1pb.UserServiceClient
-	MemoService     v1pb.MemoServiceClient
-	ResourceService v1pb.ResourceServiceClient
+	WorkspaceService v1pb.WorkspaceServiceClient
+	AuthService      v1pb.AuthServiceClient
+	UserService      v1pb.UserServiceClient
+	MemoService      v1pb.MemoServiceClient
+	ResourceService  v1pb.ResourceServiceClient
 }
 
 func NewMemosClient(conn *grpc.ClientConn) *MemosClient {
 	return &MemosClient{
-		AuthService:     v1pb.NewAuthServiceClient(conn),
-		UserService:     v1pb.NewUserServiceClient(conn),
-		MemoService:     v1pb.NewMemoServiceClient(conn),
-		ResourceService: v1pb.NewResourceServiceClient(conn),
+		WorkspaceService: v1pb.NewWorkspaceServiceClient(conn),
+		AuthService:      v1pb.NewAuthServiceClient(conn),
+		UserService:      v1pb.NewUserServiceClient(conn),
+		MemoService:      v1pb.NewMemoServiceClient(conn),
+		ResourceService:  v1pb.NewResourceServiceClient(conn),
 	}
 }

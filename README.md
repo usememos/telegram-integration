@@ -16,9 +16,12 @@ Download the binary files for your operating system from the [Releases](https://
 Create a `.env` file in the project's root directory and add the following configuration:
 
 ```env
-SERVER_ADDR=your_memos_server_address (e.g., https://demo.usememos.com)
+SERVER_ADDR=dns:localhost:5230
 BOT_TOKEN=your_telegram_bot_token
 ```
+
+The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution
+](https://github.com/grpc/grpc/blob/master/doc/naming.md).
 
 ## Usage
 
