@@ -5,7 +5,7 @@ go 1.22.2
 require (
 	github.com/caarlos0/env v3.5.0+incompatible
 	github.com/usememos/memos v0.21.1-0.20240509141027-584c66906883
-	google.golang.org/grpc v1.63.2
+	google.golang.org/grpc v1.64.0
 )
 
 require (
