@@ -95,7 +95,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	if message.Caption != "" {
 		content = message.Caption
 	}
-	hasResource := message.Document != nil || len(message.Photo) > 0
+	hasResource := message.Document != nil || len(message.Photo) > 0 || len(message.Voice) != nil
 	if content == "" && !hasResource {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -134,6 +134,21 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	if len(message.Photo) > 0 {
 		photo := message.Photo[len(message.Photo)-1]
 		file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: photo.FileID})
+		if err != nil {
+			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
+			return
+		}
+
+		_, err = s.saveResourceFromFile(ctx, file, memo)
+		if err != nil {
+			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
+			return
+		}
+	}
+
+	if len(message.Voice) != nil {
+		voice := message.Voice
+		file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: voice.FileID})
 		if err != nil {
 			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
 			return
