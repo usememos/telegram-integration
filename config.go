@@ -1,6 +1,7 @@
 package memogram
 
 import (
+	"os"
 	"github.com/caarlos0/env"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
@@ -12,9 +13,12 @@ type Config struct {
 }
 
 func getConfigFromEnv() (*Config, error) {
-	err := godotenv.Load(".env")
-	if err != nil {
-		panic(err.Error())
+	envFileName := ".env"
+	if _, err := os.Stat(envFileName); err == nil {
+		err := godotenv.Load(envFileName)
+		if err != nil {
+			panic(err.Error())
+		}
 	}
 
 	config := Config{}
