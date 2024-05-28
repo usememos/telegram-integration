@@ -200,7 +200,7 @@ func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, m
 	return resource, nil
 }
 
-func (s *Service) processMessage(ctx context.Context, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
+func (s *Service) processFileMessage(ctx context.Context, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
     file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
     if err != nil {
         s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
