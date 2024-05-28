@@ -119,20 +119,20 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	}
 
 	if message.Document != nil {
-		s.processMessage(ctx, b, m, message.Document.FileID, memo)
+		s.processFileMessage(ctx, b, m, message.Document.FileID, memo)
 	}
 
 	if message.Voice != nil {
-		s.processMessage(ctx, b, m, message.Voice.FileID, memo)
+		s.processFileMessage(ctx, b, m, message.Voice.FileID, memo)
 	}
 
 	if message.Video != nil {
-		s.processMessage(ctx, b, m, message.Video.FileID, memo)
+		s.processFileMessage(ctx, b, m, message.Video.FileID, memo)
 	}
 
 	if len(message.Photo) > 0 {
 		photo := message.Photo[len(message.Photo)-1]
-		s.processMessage(ctx, b, m, photo.FileID, memo)
+		s.processFileMessage(ctx, b, m, photo.FileID, memo)
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
