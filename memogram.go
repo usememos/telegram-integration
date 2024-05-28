@@ -95,7 +95,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	if message.Caption != "" {
 		content = message.Caption
 	}
-	hasResource := message.Document != nil || len(message.Photo) > 0
+	hasResource := message.Document != nil || len(message.Photo) > 0 || message.Voice != nil || message.Video != nil
 	if content == "" && !hasResource {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -119,31 +119,20 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	}
 
 	if message.Document != nil {
-		file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: message.Document.FileID})
-		if err != nil {
-			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
-			return
-		}
-
-		_, err = s.saveResourceFromFile(ctx, file, memo)
-		if err != nil {
-			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
-			return
-		}
+		s.processMessage(ctx, b, m, message.Document.FileID, memo)
 	}
+
+	if message.Voice != nil {
+		s.processMessage(ctx, b, m, message.Voice.FileID, memo)
+	}
+
+	if message.Video != nil {
+		s.processMessage(ctx, b, m, message.Video.FileID, memo)
+	}
+
 	if len(message.Photo) > 0 {
 		photo := message.Photo[len(message.Photo)-1]
-		file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: photo.FileID})
-		if err != nil {
-			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
-			return
-		}
-
-		_, err = s.saveResourceFromFile(ctx, file, memo)
-		if err != nil {
-			s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
-			return
-		}
+		s.processMessage(ctx, b, m, photo.FileID, memo)
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
@@ -210,6 +199,21 @@ func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, m
 
 	return resource, nil
 }
+
+func (s *Service) processMessage(ctx context.Context, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
+    file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
+    if err != nil {
+        s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
+        return
+    }
+
+    _, err = s.saveResourceFromFile(ctx, file, memo)
+    if err != nil {
+        s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
+        return
+    }
+}
+
 
 func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {
 	slog.Error("error", slog.Any("err", err))
