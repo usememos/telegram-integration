@@ -95,6 +95,44 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	if message.Caption != "" {
 		content = message.Caption
 	}
+
+	// Add "forwarded from: originName" if message was forwarded
+	if m.Message.ForwardOrigin != nil {
+		var originName, originUsername string
+		// Determine the type of origin
+		switch origin := m.Message.ForwardOrigin; {
+		case origin.MessageOriginUser != nil: // User
+			user := origin.MessageOriginUser.SenderUser
+			if user.LastName != "" {
+				originName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				originName = user.FirstName
+			}
+			originUsername = user.Username
+		case origin.MessageOriginHiddenUser != nil: // Hidden User
+			hiddenUserName := origin.MessageOriginHiddenUser.SenderUserName
+			if hiddenUserName != "" {
+				originName = hiddenUserName
+			} else {
+				originName = "Hidden User"
+			}
+		case origin.MessageOriginChat != nil: // Chat
+			chat := origin.MessageOriginChat.SenderChat
+			originName = chat.Title
+			originUsername = chat.Username
+		case origin.MessageOriginChannel != nil: // Channel
+			channel := origin.MessageOriginChannel.Chat
+			originName = channel.Title
+			originUsername = channel.Username
+		}
+
+		if originUsername != "" {
+			content = fmt.Sprintf("Forwarded from: [%s](https://t.me/%s)\n%s", originName, originUsername, content)
+		} else {
+			content = fmt.Sprintf("Forwarded from: %s\n%s", originName, content)
+		}
+	}
+
 	hasResource := message.Document != nil || len(message.Photo) > 0 || message.Voice != nil || message.Video != nil
 	if content == "" && !hasResource {
 		b.SendMessage(ctx, &bot.SendMessageParams{
