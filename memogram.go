@@ -129,7 +129,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		if originUsername != "" {
 			content = fmt.Sprintf("Forwarded from [%s](https://t.me/%s)\n%s", originName, originUsername, content)
 		} else {
-			content = fmt.Sprintf("%s\n---\nForwarded from %s", originName, content)
+			content = fmt.Sprintf("Forwarded from %s\n%s", originName, content)
 		}
 	}
 
