@@ -127,9 +127,9 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		}
 
 		if originUsername != "" {
-			content = fmt.Sprintf("Forwarded from: [%s](https://t.me/%s)\n%s", originName, originUsername, content)
+			content = fmt.Sprintf("Forwarded from [%s](https://t.me/%s)\n%s", originName, originUsername, content)
 		} else {
-			content = fmt.Sprintf("Forwarded from: %s\n%s", originName, content)
+			content = fmt.Sprintf("%s\n---\nForwarded from %s", originName, content)
 		}
 	}
 
@@ -239,19 +239,18 @@ func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, m
 }
 
 func (s *Service) processFileMessage(ctx context.Context, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
-    file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
-    if err != nil {
-        s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
-        return
-    }
+	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
+	if err != nil {
+		s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
+		return
+	}
 
-    _, err = s.saveResourceFromFile(ctx, file, memo)
-    if err != nil {
-        s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
-        return
-    }
+	_, err = s.saveResourceFromFile(ctx, file, memo)
+	if err != nil {
+		s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
+		return
+	}
 }
-
 
 func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {
 	slog.Error("error", slog.Any("err", err))
