@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -58,6 +59,21 @@ func NewService() (*Service, error) {
 		return nil, errors.Wrap(err, "failed to create bot")
 	}
 	s.bot = b
+
+	if config.AccessToken != "" {
+		parts := strings.Split(config.AccessToken, ":")
+		if len(parts) == 2 {
+			userIDStr := parts[0]
+			accessToken := parts[1]
+			userID, err := strconv.ParseInt(userIDStr, 10, 64)
+			if err != nil {
+				slog.Error("failed to parse userID to int64", slog.String("userID", userIDStr))
+				return nil, err
+			}
+			userAccessTokenCache.Store(userID, accessToken)
+			slog.Info("load accessToken", slog.Any("userID", userID))
+		}
+	}
 
 	return s, nil
 }
