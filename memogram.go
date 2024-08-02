@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 // userAccessTokenCache is a cache for user access token.
@@ -51,6 +52,7 @@ func NewService() (*Service, error) {
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(s.handler),
+		bot.WithCallbackQueryDataHandler("", bot.MatchTypePrefix, s.callbackQueryHandler),
 	}
 
 	b, err := bot.New(config.BotToken, opts...)
@@ -175,12 +177,13 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              m.Message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved with [%s](%s/m/%s)", memo.Name, s.config.ServerAddr, memo.Uid),
+		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/m/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.config.ServerAddr, memo.Uid),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
 			MessageID: message.ID,
 		},
+		ReplyMarkup: s.keyboard(memo),
 	})
 }
 
@@ -202,6 +205,124 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: m.Message.Chat.ID,
 		Text:   fmt.Sprintf("Hello %s!", user.Nickname),
+	})
+}
+
+func (s *Service) keyboard(memo *v1pb.Memo) *models.InlineKeyboardMarkup {
+	// add inline keyboard to edit memo, Public，Private， Pin
+	return &models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{
+				{
+					{
+						Text: "Public",
+						CallbackData:  fmt.Sprintf("public %s",  memo.Name),
+					},
+					{
+						Text: "Private",
+						CallbackData:  fmt.Sprintf("private %s",  memo.Name),
+					},
+					{
+						Text: "Pin",
+						CallbackData:  fmt.Sprintf("pin %s",  memo.Name),
+					},
+				},
+			},
+		}
+}
+
+func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	callbackData := update.CallbackQuery.Data
+	userID := update.CallbackQuery.From.ID
+
+	slog.Info("bot callbackData", slog.String("callbackData", callbackData))
+
+	accessToken, ok := userAccessTokenCache.Load(userID)
+	if !ok {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: update.CallbackQuery.ID,
+			Text:            "Please start the bot with /start <access_token>",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken.(string))))
+
+	parts := strings.Split(callbackData, " ")
+	if len(parts) != 2 {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: update.CallbackQuery.ID,
+			Text:            "Invalid command",
+			ShowAlert:       true,
+		})
+		return
+	}
+	slog.Info("parts", slog.Any("parts", parts))
+	action, memoName := parts[0], parts[1]
+
+	memo, err := s.client.MemoService.GetMemo(ctx, &v1pb.GetMemoRequest{
+		// memos/{id}
+		Name: memoName,
+	})
+	if err != nil {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: update.CallbackQuery.ID,
+			Text:            fmt.Sprintf("Memo %s not found", memoName),
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	switch action {
+	case "public":
+		memo.Visibility = v1pb.Visibility_PUBLIC
+	case "protected":
+		memo.Visibility = v1pb.Visibility_PROTECTED
+	case "private":
+		memo.Visibility = v1pb.Visibility_PRIVATE
+	case "pin":
+		memo.Pinned = !memo.Pinned
+	default:
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: update.CallbackQuery.ID,
+			Text:            "Unknown action",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	_, e := s.client.MemoService.UpdateMemo(ctx, &v1pb.UpdateMemoRequest{
+		Memo: memo,
+		UpdateMask: &fieldmaskpb.FieldMask{
+			Paths: []string{"visibility", "pinned"},
+		},
+	})
+	if e != nil {
+		slog.Error("failed to update memo", slog.Any("err", e))
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: update.CallbackQuery.ID,
+			Text:            "Failed to update memo",
+			ShowAlert:       true,
+		})
+		return
+	}
+	var pinnedMarker string
+	if memo.Pinned {
+		pinnedMarker = "📌"
+	} else {
+		pinnedMarker = ""
+	}
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		MessageID: update.CallbackQuery.Message.Message.ID,
+		Text:      fmt.Sprintf("Memo updated as %s with [%s](%s/m/%s) %s", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.config.ServerAddr, memo.Uid, pinnedMarker),
+		ParseMode: models.ParseModeMarkdown,
+		ReplyMarkup: s.keyboard(memo),
+	})
+
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: update.CallbackQuery.ID,
+		Text:            "Memo updated",
 	})
 }
 
