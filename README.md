@@ -81,3 +81,4 @@ Or you can start the service with Docker Compose. This can be combined with the 
 - `/start <access_token>`: Start the bot with your Memos access token.
 - Send text messages: Save the message content as a memo.
 - Send files (photos, documents): Save the files as resources in a memo.
+- `/search <words>`: Search for the memos.
