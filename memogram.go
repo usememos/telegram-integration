@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -72,6 +73,16 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
 	s.bot.Start(ctx)
+}
+
+func (s *Service) getMemosUrl() string {
+	url := s.config.ServerAddr
+	url = strings.TrimPrefix(url, "dns:")
+	// Compile regex to match ":<any numbers>"
+	re := regexp.MustCompile(`:\d+`)
+
+	// Transform to proper URL
+	return "https://" + re.ReplaceAllString(url, "")
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
@@ -175,7 +186,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              m.Message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved with [%s](%s/m/%s)", memo.Name, s.config.ServerAddr, memo.Uid),
+		Text:                fmt.Sprintf("Content saved with [%s](%s/m/%s)", memo.Name, s.getMemosUrl(), memo.Uid),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
