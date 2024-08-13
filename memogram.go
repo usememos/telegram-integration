@@ -3,12 +3,16 @@ package memogram
 import (
 	"context"
 	"fmt"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -72,6 +76,33 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
 	s.bot.Start(ctx)
+}
+
+func extractDateAndCreateTimestamp(s string) (*timestamppb.Timestamp, error) {
+	// Define a regex pattern to match a date in the format dd.MM.yyyy at the start of the string
+	datePattern := `^(\d{2})\.(\d{2})\.(\d{4})`
+	re := regexp.MustCompile(datePattern)
+
+	// Check if the string starts with a date
+	matches := re.FindStringSubmatch(s)
+	if len(matches) != 4 {
+		return nil, fmt.Errorf("no valid date found at the start of the string")
+	}
+
+	// Extract the day, month, and year from the matches
+	day := matches[1]
+	month := matches[2]
+	year := matches[3]
+
+	// Parse the extracted date into a time.Time object
+	parsedDate, err := time.Parse("02.01.2006", fmt.Sprintf("%s.%s.%s", day, month, year))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse date: %v", err)
+	}
+
+	// Convert the time.Time object into a google.protobuf.Timestamp
+	timestamp := timestamppb.New(parsedDate)
+	return timestamp, nil
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
@@ -156,6 +187,27 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 
+	timestamp, err := extractDateAndCreateTimestamp(content)
+	if err == nil {
+		memo.CreateTime = timestamp
+		updateMask := &fieldmaskpb.FieldMask{
+			Paths: []string{"create_time"},
+		}
+		new_memo, err := s.client.MemoService.UpdateMemo(ctx, &v1pb.UpdateMemoRequest{
+			Memo:       memo,
+			UpdateMask: updateMask,
+		})
+		if err != nil {
+			slog.Error("failed to update date for memo", slog.Any("err", err))
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: m.Message.Chat.ID,
+				Text:   "Failed to update date for memo",
+			})
+			return
+		}
+		memo = new_memo
+	}
+
 	if message.Document != nil {
 		s.processFileMessage(ctx, b, m, message.Document.FileID, memo)
 	}
@@ -173,9 +225,14 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		s.processFileMessage(ctx, b, m, photo.FileID, memo)
 	}
 
+	formattedTime := memo.CreateTime.AsTime().Format("2006-01-02 15:04:05")
+	// Escape minuses for Telegram
+	formattedTime = strings.ReplaceAll(formattedTime, "-", "\\-")
+	tgMessage := fmt.Sprintf("Content saved with [%s](%s/m/%s) \\(%s\\)", memo.Name, s.config.ServerAddr, memo.Uid, formattedTime)
+
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              m.Message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved with [%s](%s/m/%s)", memo.Name, s.config.ServerAddr, memo.Uid),
+		Text:                tgMessage,
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
