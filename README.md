@@ -66,14 +66,12 @@ Or you can start the service with Docker Compose. This can be combined with the 
     BOT_TOKEN=your_telegram_bot_token
     ```
 4.  Create Docker Compose `docker-compose.yml` file:
-
     ```yaml
-services:
-  memogram:
-    env_file: .env
-    build: memogram
-    container_name: memogram
-
+    services:
+      memogram:
+        env_file: .env
+        build: memogram
+        container_name: memogram
     ```
 5. Run the bot via `docker compose up -d`
 6. The Memogram service should now be running inside the Docker container. You can interact with it via your Telegram bot.
