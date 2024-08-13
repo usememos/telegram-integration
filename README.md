@@ -18,9 +18,12 @@ Create a `.env` file in the project's root directory and add the following confi
 ```env
 SERVER_ADDR=dns:localhost:5230
 BOT_TOKEN=your_telegram_bot_token
+ACCESS_TOKEN=telegram_userId:access_token
 ```
 
 The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution](https://github.com/grpc/grpc/blob/master/doc/naming.md).
+
+`ACCESS_TOKEN` keeps the telegram bot logged in after a memogram reboot. You can get `telegram_userId` from [@userinfobot](https://t.me/userinfobot).
 
 ## Usage
 
