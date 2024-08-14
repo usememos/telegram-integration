@@ -217,7 +217,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 	accessToken, _ := userAccessTokenCache.Load(userID)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken.(string))))
 	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
-		PageSize: 50,
+		PageSize: 10,
 		Filter:   filterString,
 	})
 
