@@ -80,6 +80,9 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	if strings.HasPrefix(m.Message.Text, "/start ") {
 		s.startHandler(ctx, b, m)
 		return
+	} else if strings.HasPrefix(m.Message.Text, "/search ") {
+		s.searchHandler(ctx, b, m)
+		return
 	}
 
 	userID := m.Message.From.ID
@@ -324,6 +327,44 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		CallbackQueryID: update.CallbackQuery.ID,
 		Text:            "Memo updated",
 	})
+}
+
+func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
+	userID := m.Message.From.ID
+	searchString := strings.TrimPrefix(m.Message.Text, "/search ")
+
+	filterString := "content_search == ['" + searchString + "']"
+
+	accessToken, _ := userAccessTokenCache.Load(userID)
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken.(string))))
+	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
+		PageSize: 10,
+		Filter:   filterString,
+	})
+
+	if err != nil {
+		slog.Error("failed to search memos", slog.Any("err", err))
+		return
+	}
+
+	memos := results.GetMemos()
+
+	if len(memos) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: m.Message.Chat.ID,
+			Text:   "No memos found for the specified search criteria.",
+		})
+	} else {
+		for _, memo := range results.GetMemos() {
+			tgMessage := memo.Name + "\n" + memo.Content
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: m.Message.Chat.ID,
+				Text:   tgMessage,
+			})
+		}
+	}
+
+	return
 }
 
 func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, memo *v1pb.Memo) (*v1pb.Resource, error) {
