@@ -178,7 +178,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              m.Message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved with [%s](%s/m/%s)", memo.Name, s.config.MemosAddr, memo.Uid),
+		Text:                fmt.Sprintf("Content saved with [%s](%s/m/%s)", memo.Name, s.config.InstanceUrl, memo.Uid),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
