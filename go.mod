@@ -9,7 +9,7 @@ require (
 )
 
 require (
-	github.com/go-telegram/bot v1.6.1
+	github.com/go-telegram/bot v1.7.2
 	github.com/joho/godotenv v1.5.1
 )
 
@@ -21,5 +21,5 @@ require (
 	golang.org/x/text v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240604185151-ef581f913117 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
+	google.golang.org/protobuf v1.34.2
 )
