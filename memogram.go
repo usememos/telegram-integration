@@ -212,7 +212,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 }
 
 func (s *Service) keyboard(memo *v1pb.Memo) *models.InlineKeyboardMarkup {
-	// add inline keyboard to edit memo, Public，Private， Pin
+	// add inline keyboard to edit memo's visibility or pinned status.
 	return &models.InlineKeyboardMarkup{
 			InlineKeyboard: [][]models.InlineKeyboardButton{
 				{
