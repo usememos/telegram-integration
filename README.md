@@ -65,7 +65,7 @@ Or you can start the service with Docker Compose. This can be combined with the 
     ```sh
     SERVER_ADDR=dns:yourMemosUrl.com:5230
     BOT_TOKEN=your_telegram_bot_token
-    MEMOS_ADDR=https://memos.example.com
+    INSTANCE_URL=https://memos.example.com
     ```
 4.  Create Docker Compose `docker-compose.yml` file:
     ```yaml
