@@ -18,6 +18,7 @@ Create a `.env` file in the project's root directory and add the following confi
 ```env
 SERVER_ADDR=dns:localhost:5230
 BOT_TOKEN=your_telegram_bot_token
+INSTANCE_URL=https://memos.example.com
 ```
 
 The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution](https://github.com/grpc/grpc/blob/master/doc/naming.md).
