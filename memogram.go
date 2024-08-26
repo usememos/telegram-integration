@@ -236,9 +236,6 @@ func (s *Service) keyboard(memo *v1pb.Memo) *models.InlineKeyboardMarkup {
 func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	callbackData := update.CallbackQuery.Data
 	userID := update.CallbackQuery.From.ID
-
-	slog.Info("bot callbackData", slog.String("callbackData", callbackData))
-
 	accessToken, ok := userAccessTokenCache.Load(userID)
 	if !ok {
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
