@@ -2,6 +2,8 @@ package memogram
 
 import (
 	"os"
+	"path"
+
 	"github.com/caarlos0/env"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
@@ -10,6 +12,7 @@ import (
 type Config struct {
 	ServerAddr string `env:"SERVER_ADDR,required"`
 	BotToken   string `env:"BOT_TOKEN,required"`
+	Data       string `env:"DATA"`
 }
 
 func getConfigFromEnv() (*Config, error) {
@@ -25,5 +28,10 @@ func getConfigFromEnv() (*Config, error) {
 	if err := env.Parse(&config); err != nil {
 		return nil, errors.Wrap(err, "invalid configuration")
 	}
+	if config.Data == "" {
+		// Default to `data.txt` if not specified.
+		config.Data = "data.txt"
+	}
+	config.Data = path.Join(".", config.Data)
 	return &config, nil
 }
