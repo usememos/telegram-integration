@@ -10,9 +10,10 @@ import (
 )
 
 type Config struct {
-	ServerAddr string `env:"SERVER_ADDR,required"`
-	BotToken   string `env:"BOT_TOKEN,required"`
-	Data       string `env:"DATA"`
+	ServerAddr  string `env:"SERVER_ADDR,required"`
+	BotToken    string `env:"BOT_TOKEN,required"`
+	InstanceUrl string `env:"INSTANCE_URL"`
+	Data        string `env:"DATA"`
 }
 
 func getConfigFromEnv() (*Config, error) {
