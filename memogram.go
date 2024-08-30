@@ -84,7 +84,6 @@ func (s *Service) createMemo(ctx context.Context, content string) (*v1pb.Memo, e
 	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
 		Content: content,
 	})
-
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
 		return nil, err
