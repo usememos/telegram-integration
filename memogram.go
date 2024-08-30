@@ -73,6 +73,23 @@ func (s *Service) Start(ctx context.Context) {
 		return
 	}
 	slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
+
+	// set bot commands
+	commands := []models.BotCommand{
+		{
+			Command:     "start",
+			Description: "Start the bot with access token",
+		},
+		{
+			Command:     "search",
+			Description: "Search for the memos",
+		},
+	}
+	_, err = s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
+	if err != nil {
+		slog.Error("failed to set bot commands", slog.Any("err", err))
+	}
+
 	s.bot.Start(ctx)
 }
 
