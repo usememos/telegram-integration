@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -25,6 +26,7 @@ type Service struct {
 	client *MemosClient
 	config *Config
 	store  *store.Store
+	cache  *Cache
 }
 
 func NewService() (*Service, error) {
@@ -48,7 +50,9 @@ func NewService() (*Service, error) {
 		config: config,
 		client: client,
 		store:  store,
+		cache:  NewCache(),
 	}
+	s.cache.startGC()
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(s.handler),
@@ -91,6 +95,43 @@ func (s *Service) Start(ctx context.Context) {
 	}
 
 	s.bot.Start(ctx)
+}
+
+func (s *Service) createMemo(ctx context.Context, content string) (*v1pb.Memo, error) {
+	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
+		Content: content,
+	})
+	if err != nil {
+		slog.Error("failed to create memo", slog.Any("err", err))
+		return nil, err
+	}
+	return memo, nil
+}
+
+func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, content string) (*v1pb.Memo, error) {
+	var memo *v1pb.Memo
+	var err error
+
+	if m.Message.MediaGroupID != "" {
+		cacheMemo, ok := s.cache.get(m.Message.MediaGroupID)
+		if !ok {
+			memo, err = s.createMemo(ctx, content)
+			if err != nil {
+				return nil, err
+			}
+
+			s.cache.set(m.Message.MediaGroupID, memo, 24*time.Hour)
+		} else {
+			memo = cacheMemo.(*v1pb.Memo)
+		}
+	} else {
+		memo, err = s.createMemo(ctx, content)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return memo, nil
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
@@ -166,11 +207,10 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 
 	accessToken, _ := s.store.GetUserAccessToken(userID)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
-		Content: content,
-	})
+
+	var memo *v1pb.Memo
+	memo, err := s.handleMemoCreation(ctx, m, content)
 	if err != nil {
-		slog.Error("failed to create memo", slog.Any("err", err))
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
 			Text:   "Failed to create memo",
