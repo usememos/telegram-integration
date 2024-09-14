@@ -40,10 +40,7 @@ func (s *Store) SaveUserAccessTokenMapToFile() error {
 		accessToken := value.(string)
 		line := strconv.FormatInt(userID, 10) + ":" + accessToken + "\n"
 		_, err := file.WriteString(line)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	})
 
 	return nil
