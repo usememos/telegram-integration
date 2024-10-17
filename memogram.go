@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -138,35 +139,65 @@ func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, cont
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
-	if strings.HasPrefix(m.Message.Text, "/start ") {
+	message := m.Message
+	if strings.HasPrefix(message.Text, "/start ") {
 		s.startHandler(ctx, b, m)
 		return
-	} else if strings.HasPrefix(m.Message.Text, "/search ") {
+	} else if strings.HasPrefix(message.Text, "/search ") {
 		s.searchHandler(ctx, b, m)
 		return
 	}
 
-	userID := m.Message.From.ID
+	userID := message.From.ID
 	if _, ok := s.store.GetUserAccessToken(userID); !ok {
 		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: m.Message.Chat.ID,
+			ChatID: message.Chat.ID,
 			Text:   "Please start the bot with /start <access_token>",
 		})
 		return
 	}
 
-	message := m.Message
-	// TODO: handle message.Entities to get markdown text.
 	content := message.Text
+	contentEntities := message.Entities
 	if message.Caption != "" {
 		content = message.Caption
+		contentEntities = message.CaptionEntities
+	}
+	if len(contentEntities) > 0 {
+		contentRunes := utf16.Encode([]rune(content))
+
+		var sb strings.Builder
+		var prevEntity = models.MessageEntity{}
+		var entityContent string
+
+		for _, entity := range contentEntities {
+			if entity.Offset > 0 && entity.Offset > prevEntity.Offset {
+				sb.WriteString(entityContent)
+				sb.WriteString(string(utf16.Decode(contentRunes[prevEntity.Offset+prevEntity.Length : entity.Offset])))
+				entityContent = string(utf16.Decode(contentRunes[entity.Offset : entity.Offset+entity.Length]))
+			}
+
+			switch entity.Type {
+			case models.MessageEntityTypeTextLink:
+				entityContent = fmt.Sprintf("[%s](%s)", entityContent, entity.URL)
+			case models.MessageEntityTypeBold:
+				entityContent = fmt.Sprintf("**%s**", entityContent)
+			case models.MessageEntityTypeItalic:
+				entityContent = fmt.Sprintf("*%s*", entityContent)
+			}
+
+			prevEntity = entity
+		}
+		sb.WriteString(entityContent)
+		sb.WriteString(string(utf16.Decode(contentRunes[prevEntity.Offset+prevEntity.Length:])))
+		content = sb.String()
 	}
 
 	// Add "forwarded from: originName" if message was forwarded
-	if m.Message.ForwardOrigin != nil {
+	if message.ForwardOrigin != nil {
 		var originName, originUsername string
 		// Determine the type of origin
-		switch origin := m.Message.ForwardOrigin; {
+		switch origin := message.ForwardOrigin; {
 		case origin.MessageOriginUser != nil: // User
 			user := origin.MessageOriginUser.SenderUser
 			if user.LastName != "" {
@@ -202,7 +233,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	hasResource := message.Document != nil || len(message.Photo) > 0 || message.Voice != nil || message.Video != nil
 	if content == "" && !hasResource {
 		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: m.Message.Chat.ID,
+			ChatID: message.Chat.ID,
 			Text:   "Please input memo content",
 		})
 		return
@@ -215,7 +246,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	memo, err := s.handleMemoCreation(ctx, m, content)
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: m.Message.Chat.ID,
+			ChatID: message.Chat.ID,
 			Text:   "Failed to create memo",
 		})
 		return
@@ -236,7 +267,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:              m.Message.Chat.ID,
+		ChatID:              message.Chat.ID,
 		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/m/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.workspaceProfile.InstanceUrl, memo.Uid),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
