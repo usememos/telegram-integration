@@ -141,7 +141,7 @@ func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, cont
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	if m.Message == nil {
-		slog.Info("memo message is nil")
+		slog.Error("memo message is nil")
 		return
 	}
 	message := m.Message
