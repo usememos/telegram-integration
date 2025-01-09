@@ -62,6 +62,9 @@ func NewService() (*Service, error) {
 		bot.WithDefaultHandler(s.handler),
 		bot.WithCallbackQueryDataHandler("", bot.MatchTypePrefix, s.callbackQueryHandler),
 	}
+	if config.BotProxyAddr != "" {
+		opts = append(opts, bot.WithServerURL(config.BotProxyAddr))
+	}
 
 	b, err := bot.New(config.BotToken, opts...)
 	if err != nil {
