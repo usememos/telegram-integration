@@ -148,7 +148,19 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 	message := m.Message
-	if strings.HasPrefix(message.Text, "/start ") {
+	if strings.EqualFold(message.Text, "/start") {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: message.Chat.ID,
+			Text:   "Please provide the access token: /start <access_token>",
+		})
+		return
+	} else if strings.EqualFold(message.Text, "/search") {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: message.Chat.ID,
+			Text:   "Usage: /search <search_string>",
+		})
+		return
+	} else if strings.HasPrefix(message.Text, "/start ") {
 		s.startHandler(ctx, b, m)
 		return
 	} else if strings.HasPrefix(message.Text, "/search ") {
