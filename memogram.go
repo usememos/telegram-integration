@@ -107,7 +107,9 @@ func (s *Service) Start(ctx context.Context) {
 
 func (s *Service) createMemo(ctx context.Context, content string) (*v1pb.Memo, error) {
 	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
-		Content: content,
+		Memo: &v1pb.Memo{
+			Content: content,
+		},
 	})
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
@@ -248,9 +250,19 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		s.processFileMessage(ctx, b, m, photo.FileID, memo)
 	}
 
+	memoUID, err := ExtractMemoUIDFromName(memo.Name)
+	if err != nil {
+		slog.Error("failed to extract memo UID", slog.Any("err", err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: message.Chat.ID,
+			Text:   "Failed to save memo",
+		})
+		return
+	}
+
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/m/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.workspaceProfile.InstanceUrl, memo.Uid),
+		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/m/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.workspaceProfile.InstanceUrl, memoUID),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
@@ -382,10 +394,20 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 	} else {
 		pinnedMarker = ""
 	}
+
+	memoUID, err := ExtractMemoUIDFromName(memo.Name)
+	if err != nil {
+		slog.Error("failed to extract memo UID", slog.Any("err", err))
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: update.CallbackQuery.ID,
+			Text:            "Failed to update memo",
+		})
+		return
+	}
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      update.CallbackQuery.Message.Message.Chat.ID,
 		MessageID:   update.CallbackQuery.Message.Message.ID,
-		Text:        fmt.Sprintf("Memo updated as %s with [%s](%s/m/%s) %s", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.config.ServerAddr, memo.Uid, pinnedMarker),
+		Text:        fmt.Sprintf("Memo updated as %s with [%s](%s/m/%s) %s", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.config.ServerAddr, memoUID, pinnedMarker),
 		ParseMode:   models.ParseModeMarkdown,
 		ReplyMarkup: s.keyboard(memo),
 	})
