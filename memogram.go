@@ -343,7 +343,6 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 	action, memoName := parts[0], parts[1]
 
 	memo, err := s.client.MemoService.GetMemo(ctx, &v1pb.GetMemoRequest{
-		// memos/{id}
 		Name: memoName,
 	})
 	if err != nil {
@@ -421,14 +420,11 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	userID := m.Message.From.ID
 	searchString := strings.TrimPrefix(m.Message.Text, "/search ")
-
-	filterString := "content_search == ['" + searchString + "']"
-
 	accessToken, _ := s.store.GetUserAccessToken(userID)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
 	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
 		PageSize: 10,
-		Filter:   filterString,
+		Filter:   fmt.Sprintf("content.match('%s')", searchString),
 	})
 
 	if err != nil {
@@ -515,7 +511,7 @@ func formatContent(content string, contentEntities []models.MessageEntity) strin
 	var sb strings.Builder
 	var prevEntity = models.MessageEntity{}
 	var entityContent string
-	re := regexp.MustCompile("^(\\s*)(.*)(\\s*)$")
+	re := regexp.MustCompile(`^(\s*)(.*)(\s*)$`)
 
 	for _, entity := range contentEntities {
 		switch entity.Type {
