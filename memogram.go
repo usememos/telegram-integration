@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
+	"sync"
 	"unicode/utf16"
 
 	"github.com/go-telegram/bot"
@@ -28,7 +28,9 @@ type Service struct {
 	client *MemosClient
 	config *Config
 	store  *store.Store
-	cache  *Cache
+
+	mediaGroupCache sync.Map
+	mediaGroupMutex sync.Mutex
 
 	workspaceProfile *v1pb.WorkspaceProfile
 }
@@ -54,9 +56,7 @@ func NewService() (*Service, error) {
 		config: config,
 		client: client,
 		store:  store,
-		cache:  NewCache(),
 	}
-	s.cache.startGC()
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(s.handler),
@@ -123,17 +123,18 @@ func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, cont
 	var err error
 
 	if m.Message.MediaGroupID != "" {
-		cacheMemo, ok := s.cache.get(m.Message.MediaGroupID)
-		if !ok {
-			memo, err = s.createMemo(ctx, content)
-			if err != nil {
-				return nil, err
-			}
+		s.mediaGroupMutex.Lock()
+		defer s.mediaGroupMutex.Unlock()
 
-			s.cache.set(m.Message.MediaGroupID, memo, 24*time.Hour)
-		} else {
-			memo = cacheMemo.(*v1pb.Memo)
+		if cache, ok := s.mediaGroupCache.Load(m.Message.MediaGroupID); ok {
+			return cache.(*v1pb.Memo), nil
 		}
+
+		memo, err = s.createMemo(ctx, content)
+		if err != nil {
+			return nil, err
+		}
+		s.mediaGroupCache.Store(m.Message.MediaGroupID, memo)
 	} else {
 		memo, err = s.createMemo(ctx, content)
 		if err != nil {
