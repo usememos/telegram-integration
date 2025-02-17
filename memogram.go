@@ -422,11 +422,20 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 	searchString := strings.TrimPrefix(m.Message.Text, "/search ")
 	accessToken, _ := s.store.GetUserAccessToken(userID)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
+	user, err := s.client.AuthService.GetAuthStatus(ctx, &v1pb.GetAuthStatusRequest{})
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: m.Message.Chat.ID,
+			Text:   "Invalid access token",
+		})
+		return
+	}
+
 	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
 		PageSize: 10,
+		Parent:   user.Name,
 		Filter:   fmt.Sprintf("content.contains('%s')", searchString),
 	})
-
 	if err != nil {
 		slog.Error("failed to search memos", slog.Any("err", err))
 		return
