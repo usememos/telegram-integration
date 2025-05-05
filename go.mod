@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/go-telegram/bot v1.14.2
+	github.com/go-telegram/bot v1.15.0
 	github.com/joho/godotenv v1.5.1
 )
 
