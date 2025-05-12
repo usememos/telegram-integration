@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf16"
-
+	
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/pkg/errors"
@@ -146,6 +146,30 @@ func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, cont
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
+	// Check if user allowed users are specified
+	if s.config.AllowedUsernames != "" {
+		username := m.Message.From.Username
+		if username == "" {
+			s.sendError(b, m.Message.Chat.ID, errors.New("your account must have a username to use this bot"))
+			return
+		}
+		allowd_usernames := strings.Split(s.config.AllowedUsernames, ",")
+		for i := range allowd_usernames {
+			allowd_usernames[i] = strings.TrimSpace(allowd_usernames[i])
+		}
+		username = strings.TrimSpace(username)
+		contains := false
+		for _, allowedUsername := range allowd_usernames {
+			if allowedUsername == username {
+				contains = true
+				break
+			}
+		}
+		if !contains {
+			s.sendError(b, m.Message.Chat.ID, fmt.Errorf("your account %s is not allowed to use this bot", username))
+			return
+		}
+	}
 	if m.Message == nil {
 		slog.Error("memo message is nil")
 		return
