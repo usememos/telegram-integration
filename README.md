@@ -19,7 +19,37 @@ Create a `.env` file in the project's root directory and add the following confi
 SERVER_ADDR=dns:localhost:5230
 BOT_TOKEN=your_telegram_bot_token
 BOT_PROXY_ADDR=https://api.your_proxy_addr.com
+ALLOWED_USERNAMES=user1,user2,user3
 ```
+
+### Configuration Options
+
+- `SERVER_ADDR`: The gRPC server address where Memos is running
+- `BOT_TOKEN`: Your Telegram bot token
+- `BOT_PROXY_ADDR`: Optional proxy address for Telegram API (leave empty if not needed)
+- `ALLOWED_USERNAMES`: Optional comma-separated list of allowed usernames (without @ symbol)
+
+### Username Restrictions
+
+The `ALLOWED_USERNAMES` environment variable allows you to restrict bot usage to specific Telegram users. When set, only users with usernames in this list will be able to interact with the bot.
+
+#### Examples
+
+1. Allow specific users:
+```env
+ALLOWED_USERNAMES=alex,john,emily
+```
+
+2. Allow all users (leave empty or remove the variable):
+```env
+ALLOWED_USERNAMES=
+```
+
+#### Important Notes
+
+- Usernames must not include the @ symbol
+- The bot will only respond to users who have a username set in their Telegram account
+- Users not in the allowed list will receive an error message: "you are not authorized to use this bot"
 
 The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution](https://github.com/grpc/grpc/blob/master/doc/naming.md).
 
