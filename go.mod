@@ -1,7 +1,8 @@
 module github.com/usememos/memogram
 
-go 1.23
-toolchain go1.24.1
+go 1.24
+
+toolchain go1.24.3
 
 require (
 	github.com/caarlos0/env v3.5.0+incompatible

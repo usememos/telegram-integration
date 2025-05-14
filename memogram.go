@@ -146,6 +146,20 @@ func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, cont
 }
 
 func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
+	// Defensive nil checks
+	if s == nil || s.config == nil {
+		fmt.Println("Service or config is nil")
+		return
+	}
+	if m == nil || m.Message == nil || m.Message.From == nil {
+		s.sendError(b, 0, errors.New("invalid message structure: missing required fields"))
+		return
+	}
+	if m.Message.Chat.ID == 0 {
+		s.sendError(b, 0, errors.New("invalid chat: missing chat ID"))
+		return
+	}
+
 	// Check if user allowed users are specified
 	if s.config.AllowedUsernames != "" {
 		username := m.Message.From.Username
