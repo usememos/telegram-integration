@@ -167,13 +167,13 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 			s.sendError(b, m.Message.Chat.ID, errors.New("your account must have a username to use this bot"))
 			return
 		}
-		allowd_usernames := strings.Split(s.config.AllowedUsernames, ",")
-		for i := range allowd_usernames {
-			allowd_usernames[i] = strings.TrimSpace(allowd_usernames[i])
+		allowedUsernames := strings.Split(s.config.AllowedUsernames, ",")
+		for i := range allowedUsernames {
+			allowedUsernames[i] = strings.TrimSpace(allowedUsernames[i])
 		}
 		username = strings.TrimSpace(username)
 		contains := false
-		for _, allowedUsername := range allowd_usernames {
+		for _, allowedUsername := range allowedUsernames {
 			if allowedUsername == username {
 				contains = true
 				break
