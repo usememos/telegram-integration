@@ -36,14 +36,16 @@ The `ALLOWED_USERNAMES` environment variable allows you to restrict bot usage to
 #### Examples
 
 1. Allow specific users:
-```env
-ALLOWED_USERNAMES=alex,john,emily
-```
+
+   ```env
+   ALLOWED_USERNAMES=alex,john,emily
+   ```
 
 2. Allow all users (leave empty or remove the variable):
-```env
-ALLOWED_USERNAMES=
-```
+
+   ```env
+   ALLOWED_USERNAMES=
+   ```
 
 #### Important Notes
 

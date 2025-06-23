@@ -10,10 +10,10 @@ import (
 )
 
 type Config struct {
-	ServerAddr    string `env:"SERVER_ADDR,required"`
-	BotToken      string `env:"BOT_TOKEN,required"`
-	BotProxyAddr  string `env:"BOT_PROXY_ADDR"`
-	Data          string `env:"DATA"`
+	ServerAddr       string `env:"SERVER_ADDR,required"`
+	BotToken         string `env:"BOT_TOKEN,required"`
+	BotProxyAddr     string `env:"BOT_PROXY_ADDR"`
+	Data             string `env:"DATA"`
 	AllowedUsernames string `env:"ALLOWED_USERNAMES"`
 }
 
@@ -44,6 +44,12 @@ func getConfigFromEnv() (*Config, error) {
 				return nil, errors.Wrapf(err, "failed to create config file: %s", config.Data)
 			}
 			file.Close()
+
+			// Get file info after creating the file
+			fileInfo, err = os.Stat(config.Data)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to get file info after creating: %s", config.Data)
+			}
 		} else {
 			return nil, errors.Wrapf(err, "failed to access config file: %s", config.Data)
 		}
@@ -52,12 +58,11 @@ func getConfigFromEnv() (*Config, error) {
 	if fileInfo.IsDir() {
 		return nil, errors.Errorf("config file cannot be a directory: %s", config.Data)
 	}
-	
+
 	config.Data, err = filepath.Abs(config.Data)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get absolute path for config file: %s", config.Data)
 	}
 
-	
 	return &config, nil
 }
