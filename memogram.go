@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf16"
-	
+
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/pkg/errors"
@@ -253,8 +253,8 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		}
 	}
 
-	hasResource := message.Document != nil || len(message.Photo) > 0 || message.Voice != nil || message.Video != nil
-	if content == "" && !hasResource {
+	hasAttachment := message.Document != nil || len(message.Photo) > 0 || message.Voice != nil || message.Video != nil
+	if content == "" && !hasAttachment {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: message.Chat.ID,
 			Text:   "Please input memo content",
@@ -316,7 +316,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 	accessToken := strings.TrimPrefix(m.Message.Text, "/start ")
 
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	user, err := s.client.AuthService.GetAuthStatus(ctx, &v1pb.GetAuthStatusRequest{})
+	currentSessionResponse, err := s.client.AuthService.GetCurrentSession(ctx, &v1pb.GetCurrentSessionRequest{})
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -324,11 +324,11 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 		})
 		return
 	}
-
+	user := currentSessionResponse.User
 	s.store.SetUserAccessToken(userID, accessToken)
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: m.Message.Chat.ID,
-		Text:   fmt.Sprintf("Hello %s!", user.Nickname),
+		Text:   fmt.Sprintf("Hello %s!", user.DisplayName),
 	})
 }
 
@@ -461,7 +461,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 	searchString := strings.TrimPrefix(m.Message.Text, "/search ")
 	accessToken, _ := s.store.GetUserAccessToken(userID)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	user, err := s.client.AuthService.GetAuthStatus(ctx, &v1pb.GetAuthStatusRequest{})
+	currentSessionResponse, err := s.client.AuthService.GetCurrentSession(ctx, &v1pb.GetCurrentSessionRequest{})
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -469,7 +469,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		})
 		return
 	}
-
+	user := currentSessionResponse.User
 	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
 		PageSize: 10,
 		Parent:   user.Name,
@@ -505,14 +505,14 @@ func (s *Service) processFileMessage(ctx context.Context, b *bot.Bot, m *models.
 		return
 	}
 
-	_, err = s.saveResourceFromFile(ctx, file, memo)
+	_, err = s.saveAttachmentFromFile(ctx, file, memo)
 	if err != nil {
-		s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save resource"))
+		s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save attachment"))
 		return
 	}
 }
 
-func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, memo *v1pb.Memo) (*v1pb.Resource, error) {
+func (s *Service) saveAttachmentFromFile(ctx context.Context, file *models.File, memo *v1pb.Memo) (*v1pb.Attachment, error) {
 	fileLink := s.bot.FileDownloadLink(file)
 	response, err := http.Get(fileLink)
 	if err != nil {
@@ -529,8 +529,8 @@ func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, m
 		return nil, errors.Wrap(err, "failed to get content type")
 	}
 
-	resource, err := s.client.ResourceService.CreateResource(ctx, &v1pb.CreateResourceRequest{
-		Resource: &v1pb.Resource{
+	attachment, err := s.client.AttachmentService.CreateAttachment(ctx, &v1pb.CreateAttachmentRequest{
+		Attachment: &v1pb.Attachment{
 			Filename: filepath.Base(file.FilePath),
 			Type:     contentType,
 			Size:     file.FileSize,
@@ -539,10 +539,10 @@ func (s *Service) saveResourceFromFile(ctx context.Context, file *models.File, m
 		},
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create resource")
+		return nil, errors.Wrap(err, "failed to create attachment")
 	}
 
-	return resource, nil
+	return attachment, nil
 }
 
 func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {
