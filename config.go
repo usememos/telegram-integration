@@ -15,6 +15,7 @@ type Config struct {
 	BotProxyAddr     string `env:"BOT_PROXY_ADDR"`
 	Data             string `env:"DATA"`
 	AllowedUsernames string `env:"ALLOWED_USERNAMES"`
+	AppendText       string `env:"APPEND_TEXT"`
 }
 
 func getConfigFromEnv() (*Config, error) {

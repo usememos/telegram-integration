@@ -106,6 +106,10 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 func (s *Service) createMemo(ctx context.Context, content string) (*v1pb.Memo, error) {
+	if s.config.AppendText != "" {
+		content += "\n" + s.config.AppendText
+	}
+
 	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
 		Memo: &v1pb.Memo{
 			Content: content,
