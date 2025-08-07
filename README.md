@@ -89,25 +89,18 @@ Or you can start the service with Docker:
 
 #### Starting with Docker Compose
 
-Or you can start the service with Docker Compose. This can be combined with the `memos` itself in the same compose file:
+You can also use Docker Compose to manage the service. There is a sample `docker-compose.yaml` file in this repository
+that includes memos and memogram as a quickstart setup.
 
 1.  Create a folder where the service will be located.
 2.  Clone this repository in a subfolder `git clone https://github.com/usememos/telegram-integration memogram`
 3.  Create `.env` file
     ```sh
-    SERVER_ADDR=dns:yourMemosUrl.com:5230
+    SERVER_ADDR=dns:memos:5230
     BOT_TOKEN=your_telegram_bot_token
     ```
-4.  Create Docker Compose `docker-compose.yml` file:
-    ```yaml
-    services:
-      memogram:
-        env_file: .env
-        build: memogram
-        container_name: memogram
-    ```
-5.  Run the bot via `docker compose up -d`
-6.  The Memogram service should now be running inside the Docker container. You can interact with it via your Telegram bot.
+4. Run the bot via `docker compose up -d`
+5. The Memogram service should now be running inside the Docker container. You can interact with it via your Telegram bot.
 
 ### Interaction Commands
 
