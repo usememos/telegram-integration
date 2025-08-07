@@ -23,7 +23,7 @@ ENV SERVER_ADDR=dns:localhost:5230
 ENV BOT_TOKEN=your_telegram_bot_token
 
 # Copy files with proper ownership
-COPY --from=builder --chown=65532:65532 /app/memogram .
+COPY --from=builder --chown=65532:65532 /app /app
 COPY --chown=65532:65532 .env.example .env
 
 CMD ["./memogram"]
