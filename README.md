@@ -28,6 +28,7 @@ ALLOWED_USERNAMES=user1,user2,user3
 - `BOT_TOKEN`: Your Telegram bot token
 - `BOT_PROXY_ADDR`: Optional proxy address for Telegram API (leave empty if not needed)
 - `ALLOWED_USERNAMES`: Optional comma-separated list of allowed usernames (without @ symbol)
+- `DATA`: Path to the file storing the user's authentication token
 
 ### Username Restrictions
 
