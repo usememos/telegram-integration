@@ -15,10 +15,6 @@ services:
       - memos
     networks:
       - memos-network
-    volumes:
-      - type: bind
-        source: data.txt
-        target: /app/data.txt
 
 networks:
   memos-network:
