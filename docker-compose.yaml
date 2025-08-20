@@ -1,0 +1,21 @@
+services:
+  memos:
+    image: neosmemo/memos:stable
+    container_name: memos
+    ports:
+      - 5230:5230
+    networks:
+      - memos-network
+
+  memogram:
+    build: .
+    env_file: .env
+    container_name: memogram
+    depends_on:
+      - memos
+    networks:
+      - memos-network
+
+networks:
+  memos-network:
+    name: memos-network
