@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/caarlos0/env v3.5.0+incompatible
 	github.com/usememos/memos v0.25.0
-	google.golang.org/grpc v1.74.2
+	google.golang.org/grpc v1.75.1
 )
 
 require (
