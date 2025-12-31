@@ -77,14 +77,19 @@ func NewService() (*Service, error) {
 
 func (s *Service) Start(ctx context.Context) {
 	slog.Info("Memogram started")
-	// Try to get workspace profile.
-	workspaceProfile, err := s.client.WorkspaceService.GetWorkspaceProfile(ctx, &v1pb.GetWorkspaceProfileRequest{})
-	if err != nil {
-		slog.Error("failed to get workspace profile", slog.Any("err", err))
-		return
+	// Prefer INSTANCE_URL for compatibility with older memos servers.
+	if s.config.InstanceURL != "" {
+		s.workspaceProfile = &v1pb.WorkspaceProfile{InstanceUrl: s.config.InstanceURL}
+	} else {
+		// Try to get workspace profile (may be unavailable on older servers).
+		workspaceProfile, err := s.client.WorkspaceService.GetWorkspaceProfile(ctx, &v1pb.GetWorkspaceProfileRequest{})
+		if err != nil {
+			slog.Error("failed to get workspace profile", slog.Any("err", err))
+			return
+		}
+		slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
+		s.workspaceProfile = workspaceProfile
 	}
-	slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
-	s.workspaceProfile = workspaceProfile
 
 	// set bot commands
 	commands := []models.BotCommand{
@@ -97,7 +102,7 @@ func (s *Service) Start(ctx context.Context) {
 			Description: "Search for the memos",
 		},
 	}
-	_, err = s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
+	_, err := s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
 	if err != nil {
 		slog.Error("failed to set bot commands", slog.Any("err", err))
 	}
