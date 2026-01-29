@@ -1,9 +1,8 @@
 package store
 
 import (
+	"fmt"
 	"sync"
-
-	"github.com/pkg/errors"
 )
 
 type Store struct {
@@ -22,7 +21,7 @@ func NewStore(data string) *Store {
 
 func (s *Store) Init() error {
 	if err := s.loadUserAccessTokenMapFromFile(); err != nil {
-		return errors.Wrap(err, "failed to load user access token map from file")
+		return fmt.Errorf("failed to load user access token map from file: %w", err)
 	}
 
 	return nil

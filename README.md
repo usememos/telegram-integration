@@ -51,6 +51,7 @@ The `ALLOWED_USERNAMES` environment variable allows you to restrict bot usage to
 
 - Usernames must not include the @ symbol
 - The bot will only respond to users who have a username set in their Telegram account
+- Matching is case-insensitive and trims whitespace
 - Users not in the allowed list will receive an error message: "you are not authorized to use this bot"
 
 The `SERVER_ADDR` should be a gRPC server address that the Memos is running on. It follows the [gRPC Name Resolution](https://github.com/grpc/grpc/blob/master/doc/naming.md).

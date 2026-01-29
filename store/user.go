@@ -2,8 +2,11 @@ package store
 
 import (
 	"bufio"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -27,22 +30,36 @@ func (s *Store) SetUserAccessToken(userID int64, accessToken string) {
 
 // SaveUserAccessTokenMapToFile saves the user access token map to a data file.
 func (s *Store) SaveUserAccessTokenMapToFile() error {
-	// Open the file for writing
-	file, err := os.OpenFile(s.Data, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	entries := s.snapshotAccessTokens()
+	dataDir := filepath.Dir(s.Data)
+	tmpFile, err := os.CreateTemp(dataDir, "memogram-*.tmp")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temp file: %w", err)
 	}
-	defer file.Close()
+	defer os.Remove(tmpFile.Name())
 
-	// Iterate over the user access token map and write each entry to the file
-	s.userAccessTokenCache.Range(func(key, value interface{}) bool {
-		userID := key.(int64)
-		accessToken := value.(string)
-		line := strconv.FormatInt(userID, 10) + ":" + accessToken + "\n"
-		_, err := file.WriteString(line)
-		return err == nil
-	})
+	writer := bufio.NewWriter(tmpFile)
+	for _, entry := range entries {
+		if _, err := fmt.Fprintf(writer, "%d:%s\n", entry.userID, entry.accessToken); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("write data file: %w", err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("flush data file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("sync data file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close data file: %w", err)
+	}
 
+	if err := os.Rename(tmpFile.Name(), s.Data); err != nil {
+		return fmt.Errorf("replace data file: %w", err)
+	}
 	return nil
 }
 
@@ -67,7 +84,10 @@ func (s *Store) loadUserAccessTokenMapFromFile() error {
 	// Read the file line by line
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
 		// Parse the line and extract the user ID and access token
 		userID, accessToken := parseLine(line)
 		if userID == 0 || accessToken == "" {
@@ -83,7 +103,7 @@ func (s *Store) loadUserAccessTokenMapFromFile() error {
 }
 
 func parseLine(line string) (int64, string) {
-	parts := strings.Split(line, ":")
+	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
 		return 0, ""
 	}
@@ -94,4 +114,34 @@ func parseLine(line string) (int64, string) {
 		return 0, ""
 	}
 	return userID, accessToken
+}
+
+type userAccessTokenEntry struct {
+	userID      int64
+	accessToken string
+}
+
+func (s *Store) snapshotAccessTokens() []userAccessTokenEntry {
+	entries := make([]userAccessTokenEntry, 0)
+	s.userAccessTokenCache.Range(func(key, value interface{}) bool {
+		userID, ok := key.(int64)
+		if !ok {
+			return true
+		}
+		accessToken, ok := value.(string)
+		if !ok {
+			return true
+		}
+		entries = append(entries, userAccessTokenEntry{
+			userID:      userID,
+			accessToken: accessToken,
+		})
+		return true
+	})
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].userID < entries[j].userID
+	})
+
+	return entries
 }

@@ -2,12 +2,14 @@ package memogram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,7 +17,6 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"github.com/pkg/errors"
 	"github.com/usememos/memogram/store"
 	v1pb "github.com/usememos/memos/proto/gen/api/v1"
 	"google.golang.org/grpc"
@@ -25,38 +26,49 @@ import (
 )
 
 type Service struct {
-	bot    *bot.Bot
-	client *MemosClient
-	config *Config
-	store  *store.Store
+	bot        *bot.Bot
+	client     *MemosClient
+	config     *Config
+	store      *store.Store
+	httpClient *http.Client
 
 	mediaGroupCache sync.Map
 	mediaGroupMutex sync.Mutex
 
-	instanceProfile *v1pb.InstanceProfile
+	instanceProfile  *v1pb.InstanceProfile
+	allowedUsernames map[string]struct{}
 }
+
+const (
+	commandStart  = "/start"
+	commandSearch = "/search"
+)
 
 func NewService() (*Service, error) {
 	config, err := getConfigFromEnv()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get config from env")
+		return nil, fmt.Errorf("failed to get config from env: %w", err)
 	}
 
 	conn, err := grpc.NewClient(config.ServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		slog.Error("failed to connect to server", slog.Any("err", err))
-		return nil, errors.Wrap(err, "failed to connect to server")
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 	client := NewMemosClient(conn)
 
 	store := store.NewStore(config.Data)
 	if err := store.Init(); err != nil {
-		return nil, errors.Wrap(err, "failed to init store")
+		return nil, fmt.Errorf("failed to init store: %w", err)
 	}
+
+	allowedUsernames := parseAllowedUsernames(config.AllowedUsernames)
 	s := &Service{
-		config: config,
-		client: client,
-		store:  store,
+		config:           config,
+		client:           client,
+		store:            store,
+		httpClient:       http.DefaultClient,
+		allowedUsernames: allowedUsernames,
 	}
 
 	opts := []bot.Option{
@@ -69,7 +81,7 @@ func NewService() (*Service, error) {
 
 	b, err := bot.New(config.BotToken, opts...)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create bot")
+		return nil, fmt.Errorf("failed to create bot: %w", err)
 	}
 	s.bot = b
 
@@ -81,11 +93,11 @@ func (s *Service) Start(ctx context.Context) {
 	// Try to get instance profile.
 	instanceProfile, err := s.client.InstanceService.GetInstanceProfile(ctx, &v1pb.GetInstanceProfileRequest{})
 	if err != nil {
-		slog.Error("failed to get instance profile", slog.Any("err", err))
-		return
+		slog.Warn("failed to get instance profile", slog.Any("err", err))
+	} else {
+		slog.Info("instance profile", slog.Any("profile", instanceProfile))
+		s.instanceProfile = instanceProfile
 	}
-	slog.Info("instance profile", slog.Any("profile", instanceProfile))
-	s.instanceProfile = instanceProfile
 
 	// set bot commands
 	commands := []models.BotCommand{
@@ -114,7 +126,7 @@ func (s *Service) createMemo(ctx context.Context, content string) (*v1pb.Memo, e
 	})
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
-		return nil, err
+		return nil, fmt.Errorf("create memo: %w", err)
 	}
 	return memo, nil
 }
@@ -161,39 +173,21 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 
-	// Check if user allowed users are specified
-	if s.config.AllowedUsernames != "" {
-		username := m.Message.From.Username
+	username := m.Message.From.Username
+	if !s.isUserAllowed(username) {
 		if username == "" {
 			s.sendError(b, m.Message.Chat.ID, errors.New("your account must have a username to use this bot"))
 			return
 		}
-		allowedUsernames := strings.Split(s.config.AllowedUsernames, ",")
-		for i := range allowedUsernames {
-			allowedUsernames[i] = strings.TrimSpace(allowedUsernames[i])
-		}
-		username = strings.TrimSpace(username)
-		contains := false
-		for _, allowedUsername := range allowedUsernames {
-			if allowedUsername == username {
-				contains = true
-				break
-			}
-		}
-		if !contains {
-			s.sendError(b, m.Message.Chat.ID, fmt.Errorf("your account %s is not allowed to use this bot", username))
-			return
-		}
-	}
-	if m.Message == nil {
-		slog.Error("memo message is nil")
+		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("your account %s is not allowed to use this bot", username))
 		return
 	}
+
 	message := m.Message
-	if strings.HasPrefix(message.Text, "/start ") {
+	if strings.HasPrefix(message.Text, commandStart+" ") || message.Text == commandStart {
 		s.startHandler(ctx, b, m)
 		return
-	} else if strings.HasPrefix(message.Text, "/search ") {
+	} else if strings.HasPrefix(message.Text, commandSearch+" ") || message.Text == commandSearch {
 		s.searchHandler(ctx, b, m)
 		return
 	}
@@ -318,7 +312,14 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 
 func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	userID := m.Message.From.ID
-	accessToken := strings.TrimPrefix(m.Message.Text, "/start ")
+	accessToken := strings.TrimSpace(strings.TrimPrefix(m.Message.Text, commandStart))
+	if accessToken == "" {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: m.Message.Chat.ID,
+			Text:   "Usage: /start <access_token>",
+		})
+		return
+	}
 
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
 	currentSessionResponse, err := s.client.AuthService.GetCurrentSession(ctx, &v1pb.GetCurrentSessionRequest{})
@@ -467,8 +468,22 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 
 func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	userID := m.Message.From.ID
-	searchString := strings.TrimPrefix(m.Message.Text, "/search ")
-	accessToken, _ := s.store.GetUserAccessToken(userID)
+	searchString := strings.TrimSpace(strings.TrimPrefix(m.Message.Text, commandSearch))
+	if searchString == "" {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: m.Message.Chat.ID,
+			Text:   "Usage: /search <words>",
+		})
+		return
+	}
+	accessToken, ok := s.store.GetUserAccessToken(userID)
+	if !ok {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: m.Message.Chat.ID,
+			Text:   "Please start the bot with /start <access_token>",
+		})
+		return
+	}
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
 	currentSessionResponse, err := s.client.AuthService.GetCurrentSession(ctx, &v1pb.GetCurrentSessionRequest{})
 	if err != nil {
@@ -517,45 +532,58 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 func (s *Service) processFileMessage(ctx context.Context, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
 	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 	if err != nil {
-		s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to get file"))
+		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("failed to get file: %w", err))
 		return
 	}
 
 	_, err = s.saveAttachmentFromFile(ctx, file, memo)
 	if err != nil {
-		s.sendError(b, m.Message.Chat.ID, errors.Wrap(err, "failed to save attachment"))
+		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("failed to save attachment: %w", err))
 		return
 	}
 }
 
 func (s *Service) saveAttachmentFromFile(ctx context.Context, file *models.File, memo *v1pb.Memo) (*v1pb.Attachment, error) {
 	fileLink := s.bot.FileDownloadLink(file)
-	response, err := http.Get(fileLink)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileLink, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to download file")
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	response, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
 	defer response.Body.Close()
 
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("download failed with status %s", response.Status)
+	}
+
 	bytes, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to read file")
+		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
-	contentType, err := getContentType(fileLink)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get content type")
+
+	contentType := response.Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(bytes)
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
 
 	attachment, err := s.client.AttachmentService.CreateAttachment(ctx, &v1pb.CreateAttachmentRequest{
 		Attachment: &v1pb.Attachment{
 			Filename: filepath.Base(file.FilePath),
 			Type:     contentType,
-			Size:     file.FileSize,
+			Size:     int64(len(bytes)),
 			Content:  bytes,
 			Memo:     &memo.Name,
 		},
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create attachment")
+		return nil, fmt.Errorf("failed to create attachment: %w", err)
 	}
 
 	return attachment, nil
@@ -569,47 +597,99 @@ func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {
 	})
 }
 
+func parseAllowedUsernames(raw string) map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, entry := range strings.Split(raw, ",") {
+		trimmed := strings.ToLower(strings.TrimSpace(entry))
+		if trimmed == "" {
+			continue
+		}
+		allowed[trimmed] = struct{}{}
+	}
+	return allowed
+}
+
+func (s *Service) isUserAllowed(username string) bool {
+	if len(s.allowedUsernames) == 0 {
+		return true
+	}
+	if username == "" {
+		return false
+	}
+	_, ok := s.allowedUsernames[strings.ToLower(strings.TrimSpace(username))]
+	return ok
+}
+
 func formatContent(content string, contentEntities []models.MessageEntity) string {
+	sort.Slice(contentEntities, func(i, j int) bool {
+		if contentEntities[i].Offset == contentEntities[j].Offset {
+			return contentEntities[i].Length < contentEntities[j].Length
+		}
+		return contentEntities[i].Offset < contentEntities[j].Offset
+	})
+
 	contentRunes := utf16.Encode([]rune(content))
 
 	var sb strings.Builder
-	var prevEntity = models.MessageEntity{}
-	var entityContent string
-	re := regexp.MustCompile(`^(\s*)(.*)(\s*)$`)
-
+	cursor := 0
 	for _, entity := range contentEntities {
-		switch entity.Type {
-		case models.MessageEntityTypeURL:
-		case models.MessageEntityTypeTextLink:
-		case models.MessageEntityTypeBold:
-		case models.MessageEntityTypeItalic:
-		default:
+		if !isSupportedEntity(entity.Type) {
 			continue
 		}
-
-		if entity.Offset >= prevEntity.Offset+prevEntity.Length {
-			sb.WriteString(entityContent)
-			sb.WriteString(string(utf16.Decode(contentRunes[prevEntity.Offset+prevEntity.Length : entity.Offset])))
-			entityContent = string(utf16.Decode(contentRunes[entity.Offset : entity.Offset+entity.Length]))
-			prevEntity = entity
-			if strings.TrimSpace(entityContent) == "" {
-				continue
-			}
+		start := entity.Offset
+		end := entity.Offset + entity.Length
+		if start < cursor {
+			// Ignore overlapping entities to avoid double formatting.
+			continue
+		}
+		if start >= len(contentRunes) {
+			break
+		}
+		if end > len(contentRunes) {
+			end = len(contentRunes)
 		}
 
-		matches := re.FindStringSubmatch(entityContent)
-		switch entity.Type {
-		case models.MessageEntityTypeURL:
-			entityContent = fmt.Sprintf("%s[%s](%s)%s", matches[1], matches[2], matches[2], matches[3])
-		case models.MessageEntityTypeTextLink:
-			entityContent = fmt.Sprintf("%s[%s](%s)%s", matches[1], matches[2], entity.URL, matches[3])
-		case models.MessageEntityTypeBold:
-			entityContent = fmt.Sprintf("%s**%s**%s", matches[1], matches[2], matches[3])
-		case models.MessageEntityTypeItalic:
-			entityContent = fmt.Sprintf("%s*%s*%s", matches[1], matches[2], matches[3])
-		}
+		sb.WriteString(string(utf16.Decode(contentRunes[cursor:start])))
+		segment := string(utf16.Decode(contentRunes[start:end]))
+		sb.WriteString(applyEntityFormatting(segment, entity))
+		cursor = end
 	}
-	sb.WriteString(entityContent)
-	sb.WriteString(string(utf16.Decode(contentRunes[prevEntity.Offset+prevEntity.Length:])))
+	sb.WriteString(string(utf16.Decode(contentRunes[cursor:])))
 	return sb.String()
+}
+
+func isSupportedEntity(entityType models.MessageEntityType) bool {
+	switch entityType {
+	case models.MessageEntityTypeURL,
+		models.MessageEntityTypeTextLink,
+		models.MessageEntityTypeBold,
+		models.MessageEntityTypeItalic:
+		return true
+	default:
+		return false
+	}
+}
+
+func applyEntityFormatting(segment string, entity models.MessageEntity) string {
+	if strings.TrimSpace(segment) == "" {
+		return segment
+	}
+	re := regexp.MustCompile(`^(\s*)(.*?)(\s*)$`)
+	matches := re.FindStringSubmatch(segment)
+	if len(matches) != 4 {
+		return segment
+	}
+	prefix, core, suffix := matches[1], matches[2], matches[3]
+	switch entity.Type {
+	case models.MessageEntityTypeURL:
+		return fmt.Sprintf("%s[%s](%s)%s", prefix, core, core, suffix)
+	case models.MessageEntityTypeTextLink:
+		return fmt.Sprintf("%s[%s](%s)%s", prefix, core, entity.URL, suffix)
+	case models.MessageEntityTypeBold:
+		return fmt.Sprintf("%s**%s**%s", prefix, core, suffix)
+	case models.MessageEntityTypeItalic:
+		return fmt.Sprintf("%s*%s*%s", prefix, core, suffix)
+	default:
+		return segment
+	}
 }

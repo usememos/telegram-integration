@@ -1,12 +1,12 @@
 package memogram
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/caarlos0/env"
 	"github.com/joho/godotenv"
-	"github.com/pkg/errors"
 )
 
 type Config struct {
@@ -20,15 +20,14 @@ type Config struct {
 func getConfigFromEnv() (*Config, error) {
 	envFileName := ".env"
 	if _, err := os.Stat(envFileName); err == nil {
-		err := godotenv.Load(envFileName)
-		if err != nil {
-			panic(err.Error())
+		if err := godotenv.Load(envFileName); err != nil {
+			return nil, fmt.Errorf("load %s: %w", envFileName, err)
 		}
 	}
 
 	config := Config{}
 	if err := env.Parse(&config); err != nil {
-		return nil, errors.Wrap(err, "invalid configuration")
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	if config.Data == "" {
 		// Default to `data.txt` if not specified.
@@ -41,27 +40,27 @@ func getConfigFromEnv() (*Config, error) {
 			// Create the file with default permissions
 			file, err := os.OpenFile(config.Data, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
-				return nil, errors.Wrapf(err, "failed to create config file: %s", config.Data)
+				return nil, fmt.Errorf("failed to create config file %s: %w", config.Data, err)
 			}
 			file.Close()
 
 			// Get file info after creating the file
 			fileInfo, err = os.Stat(config.Data)
 			if err != nil {
-				return nil, errors.Wrapf(err, "failed to get file info after creating: %s", config.Data)
+				return nil, fmt.Errorf("failed to get file info after creating %s: %w", config.Data, err)
 			}
 		} else {
-			return nil, errors.Wrapf(err, "failed to access config file: %s", config.Data)
+			return nil, fmt.Errorf("failed to access config file %s: %w", config.Data, err)
 		}
 	}
 
 	if fileInfo.IsDir() {
-		return nil, errors.Errorf("config file cannot be a directory: %s", config.Data)
+		return nil, fmt.Errorf("config file cannot be a directory: %s", config.Data)
 	}
 
 	config.Data, err = filepath.Abs(config.Data)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get absolute path for config file: %s", config.Data)
+		return nil, fmt.Errorf("failed to get absolute path for config file %s: %w", config.Data, err)
 	}
 
 	return &config, nil
