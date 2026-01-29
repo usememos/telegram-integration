@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/caarlos0/env v3.5.0+incompatible
-	github.com/usememos/memos v0.25.1
+	github.com/usememos/memos v0.25.3
 	google.golang.org/grpc v1.78.0
 )
 
