@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -32,7 +33,7 @@ type Service struct {
 	mediaGroupCache sync.Map
 	mediaGroupMutex sync.Mutex
 
-	workspaceProfile *v1pb.WorkspaceProfile
+	instanceProfile *v1pb.InstanceProfile
 }
 
 func NewService() (*Service, error) {
@@ -77,14 +78,14 @@ func NewService() (*Service, error) {
 
 func (s *Service) Start(ctx context.Context) {
 	slog.Info("Memogram started")
-	// Try to get workspace profile.
-	workspaceProfile, err := s.client.WorkspaceService.GetWorkspaceProfile(ctx, &v1pb.GetWorkspaceProfileRequest{})
+	// Try to get instance profile.
+	instanceProfile, err := s.client.InstanceService.GetInstanceProfile(ctx, &v1pb.GetInstanceProfileRequest{})
 	if err != nil {
-		slog.Error("failed to get workspace profile", slog.Any("err", err))
+		slog.Error("failed to get instance profile", slog.Any("err", err))
 		return
 	}
-	slog.Info("workspace profile", slog.Any("profile", workspaceProfile))
-	s.workspaceProfile = workspaceProfile
+	slog.Info("instance profile", slog.Any("profile", instanceProfile))
+	s.instanceProfile = instanceProfile
 
 	// set bot commands
 	commands := []models.BotCommand{
@@ -299,9 +300,13 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 
+	baseURL := s.config.ServerAddr
+	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
+		baseURL = s.instanceProfile.InstanceUrl
+	}
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/m/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.workspaceProfile.InstanceUrl, memoUID),
+		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/m/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, baseURL, memoUID),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
@@ -442,10 +447,14 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		})
 		return
 	}
+	baseURL := s.config.ServerAddr
+	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
+		baseURL = s.instanceProfile.InstanceUrl
+	}
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      update.CallbackQuery.Message.Message.Chat.ID,
 		MessageID:   update.CallbackQuery.Message.Message.ID,
-		Text:        fmt.Sprintf("Memo updated as %s with [%s](%s/m/%s) %s", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, s.config.ServerAddr, memoUID, pinnedMarker),
+		Text:        fmt.Sprintf("Memo updated as %s with [%s](%s/m/%s) %s", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, baseURL, memoUID, pinnedMarker),
 		ParseMode:   models.ParseModeMarkdown,
 		ReplyMarkup: s.keyboard(memo),
 	})
@@ -470,10 +479,17 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		return
 	}
 	user := currentSessionResponse.User
+	filter := fmt.Sprintf("content.contains(%s)", strconv.Quote(searchString))
+	if user != nil {
+		if tokens, err := GetNameParentTokens(user.Name, "users/"); err == nil && len(tokens) == 1 {
+			if userID, err := strconv.ParseInt(tokens[0], 10, 64); err == nil {
+				filter = fmt.Sprintf("content.contains(%s) && creator_id == %d", strconv.Quote(searchString), userID)
+			}
+		}
+	}
 	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
 		PageSize: 10,
-		Parent:   user.Name,
-		Filter:   fmt.Sprintf("content.contains('%s')", searchString),
+		Filter:   filter,
 	})
 	if err != nil {
 		slog.Error("failed to search memos", slog.Any("err", err))

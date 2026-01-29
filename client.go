@@ -6,7 +6,7 @@ import (
 )
 
 type MemosClient struct {
-	WorkspaceService  v1pb.WorkspaceServiceClient
+	InstanceService   v1pb.InstanceServiceClient
 	AuthService       v1pb.AuthServiceClient
 	UserService       v1pb.UserServiceClient
 	MemoService       v1pb.MemoServiceClient
@@ -15,7 +15,7 @@ type MemosClient struct {
 
 func NewMemosClient(conn *grpc.ClientConn) *MemosClient {
 	return &MemosClient{
-		WorkspaceService:  v1pb.NewWorkspaceServiceClient(conn),
+		InstanceService:   v1pb.NewInstanceServiceClient(conn),
 		AuthService:       v1pb.NewAuthServiceClient(conn),
 		UserService:       v1pb.NewUserServiceClient(conn),
 		MemoService:       v1pb.NewMemoServiceClient(conn),
