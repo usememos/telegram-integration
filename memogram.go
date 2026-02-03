@@ -322,7 +322,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 	}
 
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	currentSessionResponse, err := s.client.AuthService.GetCurrentSession(ctx, &v1pb.GetCurrentSessionRequest{})
+	currentUserResponse, err := s.client.AuthService.GetCurrentUser(ctx, &v1pb.GetCurrentUserRequest{})
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -330,7 +330,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 		})
 		return
 	}
-	user := currentSessionResponse.User
+	user := currentUserResponse.User
 	s.store.SetUserAccessToken(userID, accessToken)
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: m.Message.Chat.ID,
@@ -485,7 +485,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		return
 	}
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	currentSessionResponse, err := s.client.AuthService.GetCurrentSession(ctx, &v1pb.GetCurrentSessionRequest{})
+	currentUserResponse, err := s.client.AuthService.GetCurrentUser(ctx, &v1pb.GetCurrentUserRequest{})
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -493,7 +493,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		})
 		return
 	}
-	user := currentSessionResponse.User
+	user := currentUserResponse.User
 	filter := fmt.Sprintf("content.contains(%s)", strconv.Quote(searchString))
 	if user != nil {
 		if tokens, err := GetNameParentTokens(user.Name, "users/"); err == nil && len(tokens) == 1 {
