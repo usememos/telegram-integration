@@ -5,13 +5,15 @@ go 1.25
 require (
 	github.com/caarlos0/env v3.5.0+incompatible
 	github.com/usememos/memos v0.26.0
-	google.golang.org/grpc v1.78.0
+	google.golang.org/grpc v1.78.0 // indirect
 )
 
 require (
 	github.com/go-telegram/bot v1.18.0
 	github.com/joho/godotenv v1.5.1
 )
+
+require connectrpc.com/connect v1.19.1
 
 require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.2 // indirect

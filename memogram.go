@@ -15,13 +15,11 @@ import (
 	"sync"
 	"unicode/utf16"
 
+	"connectrpc.com/connect"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/usememos/memogram/store"
 	v1pb "github.com/usememos/memos/proto/gen/api/v1"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -50,12 +48,17 @@ func NewService() (*Service, error) {
 		return nil, fmt.Errorf("failed to get config from env: %w", err)
 	}
 
-	conn, err := grpc.NewClient(config.ServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		slog.Error("failed to connect to server", slog.Any("err", err))
-		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	// Connect using Connect protocol (HTTP-based, not native gRPC)
+	// ServerAddr can be "localhost:8081", "dns:localhost:8081", or "http://localhost:8081"
+	baseURL := config.ServerAddr
+	// Remove gRPC scheme prefixes
+	baseURL = strings.TrimPrefix(baseURL, "dns:")
+	// Add http:// if no scheme present
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		baseURL = "http://" + baseURL
 	}
-	client := NewMemosClient(conn)
+
+	client := NewMemosClient(baseURL)
 
 	store := store.NewStore(config.Data)
 	if err := store.Init(); err != nil {
@@ -91,10 +94,11 @@ func NewService() (*Service, error) {
 func (s *Service) Start(ctx context.Context) {
 	slog.Info("Memogram started")
 	// Try to get instance profile.
-	instanceProfile, err := s.client.InstanceService.GetInstanceProfile(ctx, &v1pb.GetInstanceProfileRequest{})
+	resp, err := s.client.InstanceService.GetInstanceProfile(ctx, connect.NewRequest(&v1pb.GetInstanceProfileRequest{}))
 	if err != nil {
 		slog.Warn("failed to get instance profile", slog.Any("err", err))
 	} else {
+		instanceProfile := resp.Msg
 		slog.Info("instance profile", slog.Any("profile", instanceProfile))
 		s.instanceProfile = instanceProfile
 	}
@@ -118,20 +122,20 @@ func (s *Service) Start(ctx context.Context) {
 	s.bot.Start(ctx)
 }
 
-func (s *Service) createMemo(ctx context.Context, content string) (*v1pb.Memo, error) {
-	memo, err := s.client.MemoService.CreateMemo(ctx, &v1pb.CreateMemoRequest{
+func (s *Service) createMemo(ctx context.Context, client *MemosClient, content string) (*v1pb.Memo, error) {
+	resp, err := client.MemoService.CreateMemo(ctx, connect.NewRequest(&v1pb.CreateMemoRequest{
 		Memo: &v1pb.Memo{
 			Content: content,
 		},
-	})
+	}))
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
 		return nil, fmt.Errorf("create memo: %w", err)
 	}
-	return memo, nil
+	return resp.Msg, nil
 }
 
-func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, content string) (*v1pb.Memo, error) {
+func (s *Service) handleMemoCreation(ctx context.Context, client *MemosClient, m *models.Update, content string) (*v1pb.Memo, error) {
 	var memo *v1pb.Memo
 	var err error
 
@@ -143,13 +147,13 @@ func (s *Service) handleMemoCreation(ctx context.Context, m *models.Update, cont
 			return cache.(*v1pb.Memo), nil
 		}
 
-		memo, err = s.createMemo(ctx, content)
+		memo, err = s.createMemo(ctx, client, content)
 		if err != nil {
 			return nil, err
 		}
 		s.mediaGroupCache.Store(m.Message.MediaGroupID, memo)
 	} else {
-		memo, err = s.createMemo(ctx, content)
+		memo, err = s.createMemo(ctx, client, content)
 		if err != nil {
 			return nil, err
 		}
@@ -258,10 +262,10 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	}
 
 	accessToken, _ := s.store.GetUserAccessToken(userID)
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
+	authClient := s.client.NewAuthenticatedClient(accessToken)
 
 	var memo *v1pb.Memo
-	memo, err := s.handleMemoCreation(ctx, m, content)
+	memo, err := s.handleMemoCreation(ctx, authClient, m, content)
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: message.Chat.ID,
@@ -271,17 +275,17 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	}
 
 	if message.Document != nil {
-		s.processFileMessage(ctx, b, m, message.Document.FileID, memo)
+		s.processFileMessage(ctx, authClient, b, m, message.Document.FileID, memo)
 	}
 	if message.Voice != nil {
-		s.processFileMessage(ctx, b, m, message.Voice.FileID, memo)
+		s.processFileMessage(ctx, authClient, b, m, message.Voice.FileID, memo)
 	}
 	if message.Video != nil {
-		s.processFileMessage(ctx, b, m, message.Video.FileID, memo)
+		s.processFileMessage(ctx, authClient, b, m, message.Video.FileID, memo)
 	}
 	if len(message.Photo) > 0 {
 		photo := message.Photo[len(message.Photo)-1]
-		s.processFileMessage(ctx, b, m, photo.FileID, memo)
+		s.processFileMessage(ctx, authClient, b, m, photo.FileID, memo)
 	}
 
 	memoUID, err := ExtractMemoUIDFromName(memo.Name)
@@ -321,8 +325,8 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 		return
 	}
 
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	currentUserResponse, err := s.client.AuthService.GetCurrentUser(ctx, &v1pb.GetCurrentUserRequest{})
+	authClient := s.client.NewAuthenticatedClient(accessToken)
+	resp, err := authClient.AuthService.GetCurrentUser(ctx, connect.NewRequest(&v1pb.GetCurrentUserRequest{}))
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -330,7 +334,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 		})
 		return
 	}
-	user := currentUserResponse.User
+	user := resp.Msg.User
 	s.store.SetUserAccessToken(userID, accessToken)
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: m.Message.Chat.ID,
@@ -373,7 +377,7 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
+	authClient := s.client.NewAuthenticatedClient(accessToken)
 
 	parts := strings.Split(callbackData, " ")
 	if len(parts) != 2 {
@@ -387,9 +391,9 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 	slog.Info("parts", slog.Any("parts", parts))
 	action, memoName := parts[0], parts[1]
 
-	memo, err := s.client.MemoService.GetMemo(ctx, &v1pb.GetMemoRequest{
+	resp, err := authClient.MemoService.GetMemo(ctx, connect.NewRequest(&v1pb.GetMemoRequest{
 		Name: memoName,
-	})
+	}))
 	if err != nil {
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 			CallbackQueryID: update.CallbackQuery.ID,
@@ -398,6 +402,8 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		})
 		return
 	}
+
+	memo := resp.Msg
 
 	switch action {
 	case "public":
@@ -417,12 +423,12 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
-	_, e := s.client.MemoService.UpdateMemo(ctx, &v1pb.UpdateMemoRequest{
+	_, e := authClient.MemoService.UpdateMemo(ctx, connect.NewRequest(&v1pb.UpdateMemoRequest{
 		Memo: memo,
 		UpdateMask: &fieldmaskpb.FieldMask{
 			Paths: []string{"visibility", "pinned"},
 		},
-	})
+	}))
 	if e != nil {
 		slog.Error("failed to update memo", slog.Any("err", e))
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
@@ -484,8 +490,8 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		})
 		return
 	}
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Authorization", fmt.Sprintf("Bearer %s", accessToken)))
-	currentUserResponse, err := s.client.AuthService.GetCurrentUser(ctx, &v1pb.GetCurrentUserRequest{})
+	authClient := s.client.NewAuthenticatedClient(accessToken)
+	resp, err := authClient.AuthService.GetCurrentUser(ctx, connect.NewRequest(&v1pb.GetCurrentUserRequest{}))
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -493,7 +499,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		})
 		return
 	}
-	user := currentUserResponse.User
+	user := resp.Msg.User
 	filter := fmt.Sprintf("content.contains(%s)", strconv.Quote(searchString))
 	if user != nil {
 		if tokens, err := GetNameParentTokens(user.Name, "users/"); err == nil && len(tokens) == 1 {
@@ -502,16 +508,16 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 			}
 		}
 	}
-	results, err := s.client.MemoService.ListMemos(ctx, &v1pb.ListMemosRequest{
+	results, err := authClient.MemoService.ListMemos(ctx, connect.NewRequest(&v1pb.ListMemosRequest{
 		PageSize: 10,
 		Filter:   filter,
-	})
+	}))
 	if err != nil {
 		slog.Error("failed to search memos", slog.Any("err", err))
 		return
 	}
 
-	memos := results.GetMemos()
+	memos := results.Msg.GetMemos()
 
 	if len(memos) == 0 {
 		b.SendMessage(ctx, &bot.SendMessageParams{
@@ -519,7 +525,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 			Text:   "No memos found for the specified search criteria.",
 		})
 	} else {
-		for _, memo := range results.GetMemos() {
+		for _, memo := range results.Msg.GetMemos() {
 			tgMessage := memo.Name + "\n" + memo.Content
 			b.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID: m.Message.Chat.ID,
@@ -529,21 +535,21 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 	}
 }
 
-func (s *Service) processFileMessage(ctx context.Context, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
+func (s *Service) processFileMessage(ctx context.Context, client *MemosClient, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
 	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 	if err != nil {
 		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("failed to get file: %w", err))
 		return
 	}
 
-	_, err = s.saveAttachmentFromFile(ctx, file, memo)
+	_, err = s.saveAttachmentFromFile(ctx, client, file, memo)
 	if err != nil {
 		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("failed to save attachment: %w", err))
 		return
 	}
 }
 
-func (s *Service) saveAttachmentFromFile(ctx context.Context, file *models.File, memo *v1pb.Memo) (*v1pb.Attachment, error) {
+func (s *Service) saveAttachmentFromFile(ctx context.Context, client *MemosClient, file *models.File, memo *v1pb.Memo) (*v1pb.Attachment, error) {
 	fileLink := s.bot.FileDownloadLink(file)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileLink, nil)
 	if err != nil {
@@ -573,7 +579,7 @@ func (s *Service) saveAttachmentFromFile(ctx context.Context, file *models.File,
 		contentType = "application/octet-stream"
 	}
 
-	attachment, err := s.client.AttachmentService.CreateAttachment(ctx, &v1pb.CreateAttachmentRequest{
+	resp, err := client.AttachmentService.CreateAttachment(ctx, connect.NewRequest(&v1pb.CreateAttachmentRequest{
 		Attachment: &v1pb.Attachment{
 			Filename: filepath.Base(file.FilePath),
 			Type:     contentType,
@@ -581,12 +587,12 @@ func (s *Service) saveAttachmentFromFile(ctx context.Context, file *models.File,
 			Content:  bytes,
 			Memo:     &memo.Name,
 		},
-	})
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create attachment: %w", err)
 	}
 
-	return attachment, nil
+	return resp.Msg, nil
 }
 
 func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {
