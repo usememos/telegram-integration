@@ -145,3 +145,8 @@ func (s *Store) snapshotAccessTokens() []userAccessTokenEntry {
 
 	return entries
 }
+
+// CountUserAccessTokens returns the number of cached Telegram user access tokens.
+func (s *Store) CountUserAccessTokens() int {
+	return len(s.snapshotAccessTokens())
+}

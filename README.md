@@ -1,3 +1,4 @@
+# Testing
 # Memogram
 
 **Memogram** is an easy to use integration service for syncing messages and images from a Telegram bot into your Memos.
@@ -113,6 +114,17 @@ Or you can start the service with Docker Compose. This can be combined with the 
 ### Interaction Commands
 
 - `/start <access_token>`: Start the bot with your Memos access token.
+- `/status`: Show the current bot configuration summary and whether your Telegram account is linked.
 - Send text messages: Save the message content as a memo.
 - Send files (photos, documents): Save the files as resources in a memo.
 - `/search <words>`: Search for the memos.
+
+### Building
+
+To build a release binary for `freebsd/x86_64`:
+
+```sh
+./build.sh
+```
+
+The output binary will be written to `build/memogram-freebsd-amd64`.

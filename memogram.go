@@ -40,6 +40,7 @@ type Service struct {
 const (
 	commandStart  = "/start"
 	commandSearch = "/search"
+	commandStatus = "/status"
 )
 
 func NewService() (*Service, error) {
@@ -112,6 +113,10 @@ func (s *Service) Start(ctx context.Context) {
 		{
 			Command:     "search",
 			Description: "Search for the memos",
+		},
+		{
+			Command:     "status",
+			Description: "Show bot and account status",
 		},
 	}
 	_, err = s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
@@ -193,6 +198,9 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	} else if strings.HasPrefix(message.Text, commandSearch+" ") || message.Text == commandSearch {
 		s.searchHandler(ctx, b, m)
+		return
+	} else if strings.HasPrefix(message.Text, commandStatus+" ") || message.Text == commandStatus {
+		s.statusHandler(ctx, b, m)
 		return
 	}
 
@@ -533,6 +541,71 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 			})
 		}
 	}
+}
+
+func (s *Service) statusHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
+	message := m.Message
+	userID := message.From.ID
+
+	lines := []string{
+		"Memogram status",
+		fmt.Sprintf("Server: %s", s.client.baseURL),
+		fmt.Sprintf("Data file: %s", s.config.Data),
+	}
+
+	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
+		lines = append(lines, fmt.Sprintf("Instance URL: %s", s.instanceProfile.InstanceUrl))
+	}
+
+	if len(s.allowedUsernames) == 0 {
+		lines = append(lines, "Allowed usernames: unrestricted")
+	} else {
+		lines = append(lines, fmt.Sprintf("Allowed usernames: %d configured", len(s.allowedUsernames)))
+	}
+
+	lines = append(lines, fmt.Sprintf("Linked Telegram users: %d", s.store.CountUserAccessTokens()))
+
+	accessToken, ok := s.store.GetUserAccessToken(userID)
+	if !ok {
+		lines = append(lines, "Account link: not connected")
+		lines = append(lines, "Use /start <access_token> to connect this Telegram account.")
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: message.Chat.ID,
+			Text:   strings.Join(lines, "\n"),
+		})
+		return
+	}
+
+	authClient := s.client.NewAuthenticatedClient(accessToken)
+	resp, err := authClient.AuthService.GetCurrentUser(ctx, connect.NewRequest(&v1pb.GetCurrentUserRequest{}))
+	if err != nil {
+		lines = append(lines, "Account link: saved token is invalid")
+		lines = append(lines, "Run /start <access_token> again to refresh it.")
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: message.Chat.ID,
+			Text:   strings.Join(lines, "\n"),
+		})
+		return
+	}
+
+	user := resp.Msg.GetUser()
+	displayName := user.GetDisplayName()
+	if displayName == "" {
+		displayName = user.GetUsername()
+	}
+	if displayName == "" {
+		displayName = user.GetName()
+	}
+	if displayName == "" {
+		displayName = "connected"
+	}
+
+	lines = append(lines, fmt.Sprintf("Account link: connected as %s", displayName))
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: message.Chat.ID,
+		Text:   strings.Join(lines, "\n"),
+	})
 }
 
 func (s *Service) processFileMessage(ctx context.Context, client *MemosClient, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {

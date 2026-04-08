@@ -1,29 +1,6 @@
 #!/bin/sh
 
-# Exit when any command fails
-set -e
+set -eu
 
-# Get the script directory and change to the project root
-cd "$(dirname "$0")/../"
-
-# Detect the operating system
-OS=$(uname -s)
-
-# Set output file name based on the OS
-if [[ "$OS" == *"CYGWIN"* || "$OS" == *"MINGW"* || "$OS" == *"MSYS"* ]]; then
-  OUTPUT="./build/memogram.exe"
-else
-  OUTPUT="./build/memogram"
-fi
-
-echo "Building for $OS..."
-
-# Build the executable
-go build -o "$OUTPUT" ./bin/memogram/main.go
-
-# Output the success message
-echo "Build successful!"
-
-# Output the command to run
-echo "To run the application, execute the following command:"
-echo "$OUTPUT"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+exec "$SCRIPT_DIR/../build.sh"
