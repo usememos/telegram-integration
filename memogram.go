@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -500,14 +499,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		return
 	}
 	user := resp.Msg.User
-	filter := fmt.Sprintf("content.contains(%s)", strconv.Quote(searchString))
-	if user != nil {
-		if tokens, err := GetNameParentTokens(user.Name, "users/"); err == nil && len(tokens) == 1 {
-			if userID, err := strconv.ParseInt(tokens[0], 10, 64); err == nil {
-				filter = fmt.Sprintf("content.contains(%s) && creator_id == %d", strconv.Quote(searchString), userID)
-			}
-		}
-	}
+	filter := buildMemoSearchFilter(searchString, user)
 	results, err := authClient.MemoService.ListMemos(ctx, connect.NewRequest(&v1pb.ListMemosRequest{
 		PageSize: 10,
 		Filter:   filter,
@@ -533,6 +525,23 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 			})
 		}
 	}
+}
+
+func buildMemoSearchFilter(searchString string, user *v1pb.User) string {
+	filter := fmt.Sprintf("content.contains(%q)", searchString)
+	if user == nil {
+		return filter
+	}
+
+	creator := user.Name
+	if creator == "" && user.Username != "" {
+		creator = "users/" + user.Username
+	}
+	if creator == "" {
+		return filter
+	}
+
+	return fmt.Sprintf("%s && creator == %q", filter, creator)
 }
 
 func (s *Service) processFileMessage(ctx context.Context, client *MemosClient, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
