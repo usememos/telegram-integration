@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/caarlos0/env v3.5.0+incompatible
-	github.com/usememos/memos v0.27.1
+	github.com/usememos/memos v0.28.0
 	google.golang.org/grpc v1.79.2 // indirect
 )
 
