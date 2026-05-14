@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  memogram:
+    image: ghcr.io/usememos/telegram-integration:latest
+    container_name: memogram
+    restart: unless-stopped
+    volumes:
+      - ./memogram-data:/app/data
+    environment:
+      - SERVER_ADDR=${SERVER_ADDR:-dns:localhost:5230}
+      - BOT_TOKEN=${BOT_TOKEN}
+      - BOT_PROXY_ADDR=${BOT_PROXY_ADDR:-}
+      - ALLOWED_USERNAMES=${ALLOWED_USERNAMES:-}

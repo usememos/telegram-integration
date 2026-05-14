@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -110,7 +112,7 @@ func (s *Service) Start(ctx context.Context) {
 		},
 		{
 			Command:     "search",
-			Description: "Search for the memos",
+			Description: "Search memos, use --all for public",
 		},
 	}
 	_, err = s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
@@ -124,7 +126,8 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) createMemo(ctx context.Context, client *MemosClient, content string) (*v1pb.Memo, error) {
 	resp, err := client.MemoService.CreateMemo(ctx, connect.NewRequest(&v1pb.CreateMemoRequest{
 		Memo: &v1pb.Memo{
-			Content: content,
+			Content:    content,
+			Visibility: v1pb.Visibility_PRIVATE,
 		},
 	}))
 	if err != nil {
@@ -297,13 +300,13 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 
-	baseURL := s.config.ServerAddr
+	baseURL := normalizeBaseURL(s.config.ServerAddr)
 	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
-		baseURL = s.instanceProfile.InstanceUrl
+		baseURL = normalizeBaseURL(s.instanceProfile.InstanceUrl)
 	}
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/memos/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, baseURL, memoUID),
+		Text:                fmt.Sprintf("Content saved as %s\n[%s](%s/memos/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, baseURL, memoUID),
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
@@ -453,9 +456,9 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		})
 		return
 	}
-	baseURL := s.config.ServerAddr
+	baseURL := normalizeBaseURL(s.config.ServerAddr)
 	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
-		baseURL = s.instanceProfile.InstanceUrl
+		baseURL = normalizeBaseURL(s.instanceProfile.InstanceUrl)
 	}
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      update.CallbackQuery.Message.Message.Chat.ID,
@@ -477,10 +480,26 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 	if searchString == "" {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
-			Text:   "Usage: /search <words>",
+			Text:   "Usage: /search [--all] <words>",
 		})
 		return
 	}
+
+	// Parse --all flag for searching all public memos
+	searchAll := false
+	parts := strings.Fields(searchString)
+	if len(parts) > 0 && parts[0] == "--all" {
+		searchAll = true
+		searchString = strings.Join(parts[1:], " ")
+	}
+	if searchString == "" {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: m.Message.Chat.ID,
+			Text:   "Usage: /search [--all] <words>",
+		})
+		return
+	}
+
 	accessToken, ok := s.store.GetUserAccessToken(userID)
 	if !ok {
 		b.SendMessage(ctx, &bot.SendMessageParams{
@@ -499,7 +518,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		return
 	}
 	user := resp.Msg.User
-	filter := buildMemoSearchFilter(searchString, user)
+	filter := buildMemoSearchFilter(searchString, user, searchAll)
 	results, err := authClient.MemoService.ListMemos(ctx, connect.NewRequest(&v1pb.ListMemosRequest{
 		PageSize: 10,
 		Filter:   filter,
@@ -511,6 +530,10 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 
 	memos := results.Msg.GetMemos()
 
+	baseURL := normalizeBaseURL(s.config.ServerAddr)
+	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
+		baseURL = normalizeBaseURL(s.instanceProfile.InstanceUrl)
+	}
 	if len(memos) == 0 {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -518,17 +541,30 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		})
 	} else {
 		for _, memo := range results.Msg.GetMemos() {
-			tgMessage := memo.Name + "\n" + memo.Content
+			memoUID, err := ExtractMemoUIDFromName(memo.Name)
+			escapedContent := html.EscapeString(memo.Content)
+			var tgMessage string
+			if err != nil {
+				slog.Error("failed to extract memo UID", slog.Any("err", err))
+				tgMessage = fmt.Sprintf("<b>%s</b>\n<code>%s</code>", html.EscapeString(memo.Name), escapedContent)
+			} else {
+				memoLink := fmt.Sprintf("%s/memos/%s", baseURL, url.PathEscape(memoUID))
+				tgMessage = fmt.Sprintf("<a href=\"%s\">%s</a>\n<code>%s</code>", memoLink, html.EscapeString(memo.Name), escapedContent)
+			}
 			b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: m.Message.Chat.ID,
-				Text:   tgMessage,
+				ChatID:    m.Message.Chat.ID,
+				Text:      tgMessage,
+				ParseMode: models.ParseModeHTML,
 			})
 		}
 	}
 }
 
-func buildMemoSearchFilter(searchString string, user *v1pb.User) string {
+func buildMemoSearchFilter(searchString string, user *v1pb.User, searchAll bool) string {
 	filter := fmt.Sprintf("content.contains(%q)", searchString)
+	if searchAll {
+		return fmt.Sprintf("%s && visibility == \"PUBLIC\"", filter)
+	}
 	if user == nil {
 		return filter
 	}
@@ -610,6 +646,14 @@ func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {
 		ChatID: chatID,
 		Text:   fmt.Sprintf("Error: %s", err.Error()),
 	})
+}
+
+func normalizeBaseURL(raw string) string {
+	raw = strings.TrimPrefix(raw, "dns:")
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		raw = "http://" + raw
+	}
+	return strings.TrimRight(raw, "/")
 }
 
 func parseAllowedUsernames(raw string) map[string]struct{} {

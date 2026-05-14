@@ -83,10 +83,13 @@ Or you can start the service with Docker:
     docker run -d --name memogram \
     -e SERVER_ADDR=dns:localhost:5230 \
     -e BOT_TOKEN=your_telegram_bot_token \
+    -v memogram-data:/app/data \
     memogram
     ```
 
 3.  The Memogram service should now be running inside the Docker container. You can interact with it via your Telegram bot.
+
+> **💡 数据持久化说明**：`-v memogram-data:/app/data` 将数据文件映射到 Docker named volume，这样更新镜像或重建容器时不会丢失用户数据。如果你想将数据直接存到宿主机指定目录，可以用 `-v /你的宿主机路径/data:/app/data` 替代。
 
 #### Starting with Docker Compose
 
@@ -106,13 +109,19 @@ Or you can start the service with Docker Compose. This can be combined with the 
         env_file: .env
         build: memogram
         container_name: memogram
+        restart: unless-stopped
+        volumes:
+          - ./memogram-data:/app/data
     ```
 5.  Run the bot via `docker compose up -d`
 6.  The Memogram service should now be running inside the Docker container. You can interact with it via your Telegram bot.
+
+> **💡 数据持久化说明**：`volumes` 配置将用户数据（如 access token 映射）持久化到宿主机目录 `./memogram-data` 中。更新镜像时只需 `docker compose up -d --build`，数据不会丢失。如果你想使用 Docker named volume，可以将 volume 改为 `memogram-data:/app/data` 并在文件末尾添加 `volumes:` 定义。
 
 ### Interaction Commands
 
 - `/start <access_token>`: Start the bot with your Memos access token.
 - Send text messages: Save the message content as a memo.
 - Send files (photos, documents): Save the files as resources in a memo.
-- `/search <words>`: Search for the memos.
+- `/search <words>`: Search for your own memos.
+- `/search --all <words>`: Search for all public memos.
