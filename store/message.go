@@ -27,6 +27,9 @@ func (s *Store) GetMemoForMessage(chatID, messageID int64) (string, bool) {
 }
 
 func (s *Store) SetMemoForMessage(chatID, messageID int64, memoName string) {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+
 	s.messageMemoCache.Store(messageKey{chatID: chatID, messageID: messageID}, memoName)
 	if err := s.saveMessageMemoMapToFile(); err != nil {
 		slog.Error("failed to save message memo map to file", "error", err)

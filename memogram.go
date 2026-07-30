@@ -352,6 +352,9 @@ func (s *Service) editedMessageHandler(ctx context.Context, b *bot.Bot, m *model
 	if message == nil || message.From == nil || message.Chat.ID == 0 {
 		return
 	}
+	if !s.isUserAllowed(message.From.Username) {
+		return
+	}
 
 	userID := message.From.ID
 	accessToken, ok := s.store.GetUserAccessToken(userID)

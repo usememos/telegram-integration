@@ -22,6 +22,9 @@ func (s *Store) GetUserAccessToken(userID int64) (string, bool) {
 
 // SetUserAccessToken sets the access token for the user.
 func (s *Store) SetUserAccessToken(userID int64, accessToken string) {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+
 	s.userAccessTokenCache.Store(userID, accessToken)
 	if err := s.SaveUserAccessTokenMapToFile(); err != nil {
 		slog.Error("failed to save user access token map to file", "error", err)

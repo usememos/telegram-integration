@@ -8,8 +8,12 @@ import (
 type Store struct {
 	Data string
 
+	// saveMu serializes cache-mutation-then-file-save sequences so an older
+	// snapshot can't win the rename race and discard a newer entry.
+	saveMu sync.Mutex
+
 	userAccessTokenCache sync.Map // map[int64]string
-	messageMemoCache     sync.Map // map[int64]string, telegram message ID -> memo resource name
+	messageMemoCache     sync.Map // map[messageKey]string
 }
 
 func NewStore(data string) *Store {

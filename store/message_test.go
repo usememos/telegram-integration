@@ -58,12 +58,19 @@ func TestMessageMemoMapScopedByChat(t *testing.T) {
 	store.SetMemoForMessage(1, 5, "memos/chat-one")
 	store.SetMemoForMessage(2, 5, "memos/chat-two")
 
-	memoName, ok := store.GetMemoForMessage(1, 5)
+	// Reload from disk to also cover the chatID:messageID:memoName persisted format,
+	// not just the in-memory cache.
+	reloaded := NewStore(dataPath)
+	if err := reloaded.Init(); err != nil {
+		t.Fatalf("init reloaded store: %v", err)
+	}
+
+	memoName, ok := reloaded.GetMemoForMessage(1, 5)
 	if !ok || memoName != "memos/chat-one" {
 		t.Fatalf("expected memos/chat-one for chat 1 message 5, got %q", memoName)
 	}
 
-	memoName, ok = store.GetMemoForMessage(2, 5)
+	memoName, ok = reloaded.GetMemoForMessage(2, 5)
 	if !ok || memoName != "memos/chat-two" {
 		t.Fatalf("expected memos/chat-two for chat 2 message 5, got %q", memoName)
 	}
