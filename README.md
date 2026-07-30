@@ -115,4 +115,5 @@ Or you can start the service with Docker Compose. This can be combined with the 
 - `/start <access_token>`: Start the bot with your Memos access token.
 - Send text messages: Save the message content as a memo.
 - Send files (photos, documents): Save the files as resources in a memo.
+- Edit a sent message: Update the memo that message originally created. Edits to messages Memogram never captured (for example, messages sent before this feature was available) are ignored.
 - `/search <words>`: Search for the memos.
