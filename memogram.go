@@ -167,6 +167,10 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		fmt.Println("Service or config is nil")
 		return
 	}
+	if m != nil && m.EditedMessage != nil {
+		s.editedMessageHandler(ctx, b, m)
+		return
+	}
 	if m == nil || m.Message == nil || m.Message.From == nil {
 		s.sendError(b, 0, errors.New("invalid message structure: missing required fields"))
 		return
@@ -272,6 +276,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		})
 		return
 	}
+	s.store.SetMemoForMessage(message.Chat.ID, int64(message.ID), memo.Name)
 
 	if message.Document != nil {
 		s.processFileMessage(ctx, authClient, b, m, message.Document.FileID, memo)
@@ -339,6 +344,54 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 		ChatID: m.Message.Chat.ID,
 		Text:   fmt.Sprintf("Hello %s!", user.DisplayName),
 	})
+}
+
+// Edits of messages with no known memo (sent before this feature existed) are ignored.
+func (s *Service) editedMessageHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
+	message := m.EditedMessage
+	if message == nil || message.From == nil || message.Chat.ID == 0 {
+		return
+	}
+	if !s.isUserAllowed(message.From.Username) {
+		return
+	}
+
+	userID := message.From.ID
+	accessToken, ok := s.store.GetUserAccessToken(userID)
+	if !ok {
+		return
+	}
+
+	memoName, ok := s.store.GetMemoForMessage(message.Chat.ID, int64(message.ID))
+	if !ok {
+		return
+	}
+
+	content := message.Text
+	contentEntities := message.Entities
+	if message.Caption != "" {
+		content = message.Caption
+		contentEntities = message.CaptionEntities
+	}
+	if len(contentEntities) > 0 {
+		content = formatContent(content, contentEntities)
+	}
+	if content == "" {
+		return
+	}
+
+	authClient := s.client.NewAuthenticatedClient(accessToken)
+	_, err := authClient.MemoService.UpdateMemo(ctx, connect.NewRequest(&v1pb.UpdateMemoRequest{
+		Memo: &v1pb.Memo{
+			Name:    memoName,
+			Content: content,
+		},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"content"}},
+	}))
+	if err != nil {
+		slog.Error("failed to update memo on edit", slog.Any("err", err))
+		s.sendError(b, message.Chat.ID, fmt.Errorf("failed to update memo: %w", err))
+	}
 }
 
 func (s *Service) keyboard(memo *v1pb.Memo) *models.InlineKeyboardMarkup {
