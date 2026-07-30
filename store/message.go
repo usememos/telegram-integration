@@ -11,16 +11,23 @@ import (
 	"strings"
 )
 
-func (s *Store) GetMemoForMessage(messageID int64) (string, bool) {
-	memoName, ok := s.messageMemoCache.Load(messageID)
+// messageKey scopes a Telegram message ID to its chat: message IDs are only
+// unique within a chat, not globally.
+type messageKey struct {
+	chatID    int64
+	messageID int64
+}
+
+func (s *Store) GetMemoForMessage(chatID, messageID int64) (string, bool) {
+	memoName, ok := s.messageMemoCache.Load(messageKey{chatID: chatID, messageID: messageID})
 	if !ok {
 		return "", false
 	}
 	return memoName.(string), true
 }
 
-func (s *Store) SetMemoForMessage(messageID int64, memoName string) {
-	s.messageMemoCache.Store(messageID, memoName)
+func (s *Store) SetMemoForMessage(chatID, messageID int64, memoName string) {
+	s.messageMemoCache.Store(messageKey{chatID: chatID, messageID: messageID}, memoName)
 	if err := s.saveMessageMemoMapToFile(); err != nil {
 		slog.Error("failed to save message memo map to file", "error", err)
 	}
@@ -42,7 +49,7 @@ func (s *Store) saveMessageMemoMapToFile() error {
 
 	writer := bufio.NewWriter(tmpFile)
 	for _, entry := range entries {
-		if _, err := fmt.Fprintf(writer, "%d:%s\n", entry.messageID, entry.memoName); err != nil {
+		if _, err := fmt.Fprintf(writer, "%d:%d:%s\n", entry.key.chatID, entry.key.messageID, entry.memoName); err != nil {
 			tmpFile.Close()
 			return fmt.Errorf("write data file: %w", err)
 		}
@@ -87,36 +94,40 @@ func (s *Store) loadMessageMemoMapFromFile() error {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		messageID, memoName := parseMessageMemoLine(line)
-		if messageID == 0 || memoName == "" {
+		key, memoName := parseMessageMemoLine(line)
+		if key.messageID == 0 || memoName == "" {
 			continue
 		}
-		s.messageMemoCache.Store(messageID, memoName)
+		s.messageMemoCache.Store(key, memoName)
 	}
 	return scanner.Err()
 }
 
-func parseMessageMemoLine(line string) (int64, string) {
-	parts := strings.SplitN(line, ":", 2)
-	if len(parts) != 2 {
-		return 0, ""
+func parseMessageMemoLine(line string) (messageKey, string) {
+	parts := strings.SplitN(line, ":", 3)
+	if len(parts) != 3 {
+		return messageKey{}, ""
 	}
-	messageID, err := strconv.ParseInt(parts[0], 10, 64)
+	chatID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return 0, ""
+		return messageKey{}, ""
 	}
-	return messageID, parts[1]
+	messageID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return messageKey{}, ""
+	}
+	return messageKey{chatID: chatID, messageID: messageID}, parts[2]
 }
 
 type messageMemoEntry struct {
-	messageID int64
-	memoName  string
+	key      messageKey
+	memoName string
 }
 
 func (s *Store) snapshotMessageMemoMap() []messageMemoEntry {
 	entries := make([]messageMemoEntry, 0)
 	s.messageMemoCache.Range(func(key, value interface{}) bool {
-		messageID, ok := key.(int64)
+		messageKey, ok := key.(messageKey)
 		if !ok {
 			return true
 		}
@@ -124,12 +135,15 @@ func (s *Store) snapshotMessageMemoMap() []messageMemoEntry {
 		if !ok {
 			return true
 		}
-		entries = append(entries, messageMemoEntry{messageID: messageID, memoName: memoName})
+		entries = append(entries, messageMemoEntry{key: messageKey, memoName: memoName})
 		return true
 	})
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].messageID < entries[j].messageID
+		if entries[i].key.chatID != entries[j].key.chatID {
+			return entries[i].key.chatID < entries[j].key.chatID
+		}
+		return entries[i].key.messageID < entries[j].key.messageID
 	})
 
 	return entries

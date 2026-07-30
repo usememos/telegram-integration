@@ -276,7 +276,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		})
 		return
 	}
-	s.store.SetMemoForMessage(int64(message.ID), memo.Name)
+	s.store.SetMemoForMessage(message.Chat.ID, int64(message.ID), memo.Name)
 
 	if message.Document != nil {
 		s.processFileMessage(ctx, authClient, b, m, message.Document.FileID, memo)
@@ -359,7 +359,7 @@ func (s *Service) editedMessageHandler(ctx context.Context, b *bot.Bot, m *model
 		return
 	}
 
-	memoName, ok := s.store.GetMemoForMessage(int64(message.ID))
+	memoName, ok := s.store.GetMemoForMessage(message.Chat.ID, int64(message.ID))
 	if !ok {
 		return
 	}
