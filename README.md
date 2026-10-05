@@ -20,6 +20,7 @@ SERVER_ADDR=dns:localhost:5230
 BOT_TOKEN=your_telegram_bot_token
 BOT_PROXY_ADDR=https://api.your_proxy_addr.com
 ALLOWED_USERNAMES=user1,user2,user3
+DEFAULT_VISIBILITY=protected
 ```
 
 ### Configuration Options
@@ -28,6 +29,7 @@ ALLOWED_USERNAMES=user1,user2,user3
 - `BOT_TOKEN`: Your Telegram bot token
 - `BOT_PROXY_ADDR`: Optional proxy address for Telegram API (leave empty if not needed)
 - `ALLOWED_USERNAMES`: Optional comma-separated list of allowed usernames (without @ symbol)
+- `DEFAULT_VISIBILITY`: Optional default visibility for newly created memos (`private`, `protected`, or `public`). Leave empty to use the Memos API default.
 
 ### Username Restrictions
 

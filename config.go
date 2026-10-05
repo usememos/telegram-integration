@@ -4,19 +4,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/caarlos0/env"
 	"github.com/joho/godotenv"
+	v1pb "github.com/usememos/memos/proto/gen/api/v1"
 )
 
 type Config struct {
-	ServerAddr       string `env:"SERVER_ADDR,required"`
-	BotToken         string `env:"BOT_TOKEN,required"`
-	BotProxyAddr     string `env:"BOT_PROXY_ADDR"`
-	Data             string `env:"DATA"`
-	AllowedUsernames string `env:"ALLOWED_USERNAMES"`
+	ServerAddr        string `env:"SERVER_ADDR,required"`
+	BotToken          string `env:"BOT_TOKEN,required"`
+	BotProxyAddr      string `env:"BOT_PROXY_ADDR"`
+	Data              string `env:"DATA"`
+	AllowedUsernames  string `env:"ALLOWED_USERNAMES"`
+	DefaultVisibility string `env:"DEFAULT_VISIBILITY"`
 }
 
+// getConfigFromEnv loads Memogram configuration from .env and process environment variables.
 func getConfigFromEnv() (*Config, error) {
 	envFileName := ".env"
 	if _, err := os.Stat(envFileName); err == nil {
@@ -64,4 +68,20 @@ func getConfigFromEnv() (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// defaultMemoVisibility returns the configured visibility for newly created memos.
+func (c *Config) defaultMemoVisibility() (v1pb.Visibility, bool, error) {
+	switch strings.ToLower(strings.TrimSpace(c.DefaultVisibility)) {
+	case "":
+		return v1pb.Visibility_VISIBILITY_UNSPECIFIED, false, nil
+	case "private":
+		return v1pb.Visibility_PRIVATE, true, nil
+	case "protected":
+		return v1pb.Visibility_PROTECTED, true, nil
+	case "public":
+		return v1pb.Visibility_PUBLIC, true, nil
+	default:
+		return v1pb.Visibility_VISIBILITY_UNSPECIFIED, false, fmt.Errorf("invalid DEFAULT_VISIBILITY %q: must be private, protected, or public", c.DefaultVisibility)
+	}
 }

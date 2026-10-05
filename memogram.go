@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf16"
 
 	"connectrpc.com/connect"
@@ -40,6 +41,8 @@ const (
 	commandStart  = "/start"
 	commandSearch = "/search"
 )
+
+const memoUpdateRetryAttempts = 5
 
 func NewService() (*Service, error) {
 	config, err := getConfigFromEnv()
@@ -121,11 +124,19 @@ func (s *Service) Start(ctx context.Context) {
 	s.bot.Start(ctx)
 }
 
+// createMemo saves content to Memos using the configured default visibility when set.
 func (s *Service) createMemo(ctx context.Context, client *MemosClient, content string) (*v1pb.Memo, error) {
+	memo := &v1pb.Memo{
+		Content: content,
+	}
+	if visibility, ok, err := s.config.defaultMemoVisibility(); err != nil {
+		return nil, err
+	} else if ok {
+		memo.Visibility = visibility
+	}
+
 	resp, err := client.MemoService.CreateMemo(ctx, connect.NewRequest(&v1pb.CreateMemoRequest{
-		Memo: &v1pb.Memo{
-			Content: content,
-		},
+		Memo: memo,
 	}))
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
@@ -351,6 +362,10 @@ func (s *Service) keyboard(memo *v1pb.Memo) *models.InlineKeyboardMarkup {
 					CallbackData: fmt.Sprintf("public %s", memo.Name),
 				},
 				{
+					Text:         "Protected",
+					CallbackData: fmt.Sprintf("protected %s", memo.Name),
+				},
+				{
 					Text:         "Private",
 					CallbackData: fmt.Sprintf("private %s", memo.Name),
 				},
@@ -403,16 +418,24 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 	}
 
 	memo := resp.Msg
+	memoPatch := &v1pb.Memo{
+		Name: memo.Name,
+	}
+	updateMaskPaths := []string{}
 
 	switch action {
 	case "public":
-		memo.Visibility = v1pb.Visibility_PUBLIC
+		memoPatch.Visibility = v1pb.Visibility_PUBLIC
+		updateMaskPaths = []string{"visibility"}
 	case "protected":
-		memo.Visibility = v1pb.Visibility_PROTECTED
+		memoPatch.Visibility = v1pb.Visibility_PROTECTED
+		updateMaskPaths = []string{"visibility"}
 	case "private":
-		memo.Visibility = v1pb.Visibility_PRIVATE
+		memoPatch.Visibility = v1pb.Visibility_PRIVATE
+		updateMaskPaths = []string{"visibility"}
 	case "pin":
-		memo.Pinned = !memo.Pinned
+		memoPatch.Pinned = !memo.Pinned
+		updateMaskPaths = []string{"pinned"}
 	default:
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 			CallbackQueryID: update.CallbackQuery.ID,
@@ -422,21 +445,22 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
-	_, e := authClient.MemoService.UpdateMemo(ctx, connect.NewRequest(&v1pb.UpdateMemoRequest{
-		Memo: memo,
+	updateResp, e := s.updateMemoWithRetry(ctx, authClient, &v1pb.UpdateMemoRequest{
+		Memo: memoPatch,
 		UpdateMask: &fieldmaskpb.FieldMask{
-			Paths: []string{"visibility", "pinned"},
+			Paths: updateMaskPaths,
 		},
-	}))
+	})
 	if e != nil {
 		slog.Error("failed to update memo", slog.Any("err", e))
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 			CallbackQueryID: update.CallbackQuery.ID,
-			Text:            "Failed to update memo",
+			Text:            fmt.Sprintf("Failed to update memo: %v", e),
 			ShowAlert:       true,
 		})
 		return
 	}
+	memo = updateResp.Msg
 	var pinnedMarker string
 	if memo.Pinned {
 		pinnedMarker = "📌"
@@ -469,6 +493,34 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		CallbackQueryID: update.CallbackQuery.ID,
 		Text:            "Memo updated",
 	})
+}
+
+func (s *Service) updateMemoWithRetry(ctx context.Context, client *MemosClient, request *v1pb.UpdateMemoRequest) (*connect.Response[v1pb.Memo], error) {
+	var err error
+	for attempt := 0; attempt < memoUpdateRetryAttempts; attempt++ {
+		var resp *connect.Response[v1pb.Memo]
+		resp, err = client.MemoService.UpdateMemo(ctx, connect.NewRequest(request))
+		if err == nil || !isSQLiteBusyError(err) {
+			return resp, err
+		}
+
+		delay := time.Duration(attempt+1) * 200 * time.Millisecond
+		slog.Warn("memo update hit locked sqlite database; retrying", slog.Int("attempt", attempt+1), slog.Duration("delay", delay), slog.Any("err", err))
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, err
+}
+
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "sqlite_busy")
 }
 
 func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Update) {
