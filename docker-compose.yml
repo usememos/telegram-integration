@@ -1,6 +1,10 @@
 services:
   memogram:
-    build: .
+    build:
+      context: .
+      args:
+        VERSION: ${MEMOGRAM_VERSION:-}
+        COMMIT: ${MEMOGRAM_COMMIT:-}
     restart: unless-stopped
     env_file: .env
     environment:

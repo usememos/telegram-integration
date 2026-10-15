@@ -23,7 +23,8 @@ jobs:
           cache: true
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go build ./bin/memogram
+      - run: sh scripts/build.sh
+      - run: ./build/memogram --version
       - run: go generate ./...
       - run: git diff --exit-code -- openapi internal/memosapi
 
@@ -46,13 +47,30 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -run TestMemosIntegration -count=1 -v .
+      - run: go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v .
         env:
           MEMOS_TEST_URL: http://127.0.0.1:5230
+
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: v2.18.3
+          install-only: true
+      - run: goreleaser check
+      - run: python3 scripts/test-release.py
 
   docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: docker build -t memogram:ci .
+      - run: sh scripts/build.sh docker -t memogram:ci
       - run: python3 scripts/test-container.py memogram:ci

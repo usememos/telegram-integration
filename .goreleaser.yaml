@@ -8,6 +8,10 @@ before:
 builds:
   - main: ./bin/memogram
     binary: memogram
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/usememos/memogram/internal/version.Version={{ .Tag }} -X github.com/usememos/memogram/internal/version.Commit={{ .FullCommit }}
     goos:
       - linux
       - darwin
@@ -31,6 +35,7 @@ checksum:
 
 release:
   draft: true
+  prerelease: auto
   replace_existing_draft: true
   replace_existing_artifacts: true
   mode: replace

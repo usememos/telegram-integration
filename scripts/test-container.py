@@ -4,6 +4,7 @@ import email.parser
 import email.policy
 import http.server
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -79,6 +80,11 @@ class MockAPI(http.server.BaseHTTPRequestHandler):
 
 def main():
     image = sys.argv[1]
+    metadata = docker("run", "--rm", image, "--version")
+    if not re.fullmatch(r"memogram [1-9][0-9]\.(0[1-9]|1[0-2])\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*|-dev\.[0-9a-f]{7})? \(commit [0-9a-f]{40}\)", metadata):
+        raise RuntimeError("invalid container version metadata: " + metadata)
+    if len(sys.argv) > 2 and not metadata.startswith("memogram " + sys.argv[2] + " "):
+        raise RuntimeError("unexpected container version: " + metadata)
     if docker("image", "inspect", image, "--format", "{{.Config.User}}") != "65532:65532":
         raise RuntimeError("container must run as UID/GID 65532")
     name = "memogram-smoke-" + uuid.uuid4().hex[:12]
@@ -107,7 +113,7 @@ def main():
                 raise RuntimeError("container smoke failed:\n" + docker("logs", name))
             docker("stop", "--time", "5", name)
             docker("rm", name)
-        print("Container smoke passed: non-root startup, token binding, recreation, saved memo.")
+        print("Container smoke passed: CalVer metadata, non-root startup, token binding, recreation, saved memo.")
     finally:
         subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         docker("volume", "rm", volume)

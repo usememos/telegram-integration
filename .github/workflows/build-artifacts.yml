@@ -3,7 +3,7 @@ name: Build artifacts
 on:
   push:
     tags:
-      - "*"
+      - "[1-9][0-9].*"
 
 permissions:
   contents: write
@@ -16,6 +16,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Validate calendar release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/release_version.sh version "$RELEASE_TAG"
+      - name: Find previous stable release
+        run: echo "GORELEASER_PREVIOUS_TAG=$(bash scripts/release_version.sh previous-tag .)" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -28,10 +34,9 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
-          # 'latest', 'nightly', or a semver
-          version: "~> v2"
+          version: v2.18.3
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}

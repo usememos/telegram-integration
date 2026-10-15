@@ -80,7 +80,7 @@ Memogram uses Memos' HTTP REST API. At startup it discovers `/api` (latest) or `
 
 Or you can start the service with Docker:
 
-1.  Build the Docker image: `docker build -t memogram .`
+1. Build the Docker image: `sh scripts/build.sh docker -t memogram`. The script passes the version and commit from Git to the Docker build.
 2.  Run the Docker container with the required environment variables:
 
     ```sh
@@ -105,12 +105,12 @@ git clone https://github.com/usememos/telegram-integration memogram
 cd memogram
 cp .env.example .env
 # Edit .env: set BOT_TOKEN and a SERVER_ADDR reachable from the container.
-docker compose up -d --build
+sh scripts/build.sh compose up -d --build
 ```
 
 Compose supplies `DATA=/data/data.txt`, retains bindings in `memogram-data`, and configures `host.docker.internal` for connecting to Memos on the host. Use `SERVER_ADDR=http://host.docker.internal:5230` for that setup, or your instance's HTTPS URL.
 
-Update with `git pull --ff-only` followed by `docker compose up -d --build`. `docker compose down` preserves bindings; `docker compose down -v` removes them.
+Update with `git pull --ff-only` followed by `sh scripts/build.sh compose up -d --build`. `docker compose down` preserves bindings; `docker compose down -v` removes them.
 
 ### Interaction Commands
 
@@ -128,25 +128,52 @@ Requires Go 1.27.2 or newer.
 ```sh
 go test -race ./...
 go vet ./...
-go build -o build/memogram ./bin/memogram
+sh scripts/build.sh
+./build/memogram --version
 ```
 
 The REST client is generated from the versioned OpenAPI specifications in [usememos/dotcom](https://github.com/usememos/dotcom/tree/main/openapi). See [openapi/README.md](openapi/README.md) for generation and supported-version updates.
 
-To run the full capture/search/attachment/visibility compatibility test, start a **fresh, disposable** Memos container and set `MEMOS_TEST_URL`:
+To run the business compatibility scenarios, start a **fresh, disposable** Memos container and set `MEMOS_TEST_URL`:
 
 ```sh
 docker run --rm -d --name memogram-memos-test \
   -e MEMOS_MODE=prod -p 127.0.0.1:5231:5230 neosmemo/memos:0.31.0
-MEMOS_TEST_URL=http://127.0.0.1:5231 go test -run TestMemosIntegration -count=1 -v .
+MEMOS_TEST_URL=http://127.0.0.1:5231 go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v .
 docker rm -f memogram-memos-test
 ```
 
-CI runs this test against `canary`, `0.30.0`, and `0.31.0`. The test creates an administrator and a Personal Access Token, and refuses to run against an instance that already has users. Telegram responses are mocked; Memos API calls use the real server.
+CI runs the same scenarios against `canary` (latest development), `0.30.0`, and `0.31.0`, with the race detector enabled. Ordinary `go test` skips this integration test unless `MEMOS_TEST_URL` is set. The test creates an administrator for setup, then uses two ordinary users and their Personal Access Tokens for business operations. It refuses to run against an instance that already has users.
+
+The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; and invalid or revoked tokens. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
 
 Verify container startup and binding persistence separately:
 
 ```sh
-docker build -t memogram .
+sh scripts/build.sh docker -t memogram
 python3 scripts/test-container.py memogram
 ```
+
+## Versioning and releases
+
+The first CalVer release is **26.10.0**, following the historical `v0.5.0` release. Memogram releases are numbered independently of the Memos versions they support.
+
+- Stable tags: `YY.MM.N`, such as `26.10.0` and `26.10.1`. Each month's sequence starts at `.0`.
+- Release candidates: `YY.MM.N-rc.K`, such as `26.10.0-rc.1`. Candidate numbers start at 1.
+- Development builds: `YY.MM.D-dev.<sha7>`, derived from HEAD's committer date in UTC and commit SHA, such as `26.10.15-dev.abcdef0`.
+
+New release tags have no `v` prefix, and months are always two digits. Bare month names such as `26.10` are not release tags. Historical `v0.x` releases remain available.
+
+`--version` prints the version and commit without loading configuration or contacting Telegram. Startup logs include the same metadata. Release builds inject the exact tag; ordinary Go package builds derive development metadata from Git. For `go run`, use `go run -buildvcs=true ./bin/memogram --version`.
+
+The build script supplies metadata for binary, Docker, and Compose builds. Docker's context excludes `.git`, so direct Docker builds must provide `--build-arg VERSION=... --build-arg COMMIT=...`. To build the first release locally without creating a Git tag or publishing:
+
+```sh
+MEMOGRAM_VERSION=26.10.0 sh scripts/build.sh
+MEMOGRAM_VERSION=26.10.0 sh scripts/build.sh docker -t memogram:26.10.0
+./build/memogram --version
+```
+
+The tag-triggered workflow validates the release format, tests the code, and uses GoReleaser 2.18.3 to build release archives. GitHub releases remain drafts, with candidates marked as prereleases. Changelogs compare against the previous stable ancestor, falling back to the legacy `v0.x` history for the first CalVer release. API support remains latest plus the two most recent stable Memos series; changing Memogram's release format does not change that matrix.
+
+CI also runs `python3 scripts/test-release.py` with GoReleaser 2.18.3. It packages `26.10.0`, `26.10.0-rc.1`, and `26.01.0` in a temporary clone, checks the native archived binary's version, and skips publishing and announcements. The test creates tags only in the disposable clone.
