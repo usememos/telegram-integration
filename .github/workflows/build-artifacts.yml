@@ -21,6 +21,10 @@ jobs:
           go-version-file: go.mod
           check-latest: true
           cache: true
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

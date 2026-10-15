@@ -1,0 +1,7 @@
+.git
+.env
+.env.*
+data.txt
+data/
+build/
+docs/

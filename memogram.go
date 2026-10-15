@@ -2,24 +2,25 @@ package memogram
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf16"
 
-	"connectrpc.com/connect"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/usememos/memogram/internal/memosapi"
 	"github.com/usememos/memogram/store"
-	v1pb "github.com/usememos/memos/proto/gen/api/v1"
-	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 type Service struct {
@@ -32,7 +33,7 @@ type Service struct {
 	mediaGroupCache sync.Map
 	mediaGroupMutex sync.Mutex
 
-	instanceProfile  *v1pb.InstanceProfile
+	instanceProfile  *memosapi.InstanceProfile
 	allowedUsernames map[string]struct{}
 }
 
@@ -47,17 +48,7 @@ func NewService() (*Service, error) {
 		return nil, fmt.Errorf("failed to get config from env: %w", err)
 	}
 
-	// Connect using Connect protocol (HTTP-based, not native gRPC)
-	// ServerAddr can be "localhost:8081", "dns:localhost:8081", or "http://localhost:8081"
-	baseURL := config.ServerAddr
-	// Remove gRPC scheme prefixes
-	baseURL = strings.TrimPrefix(baseURL, "dns:")
-	// Add http:// if no scheme present
-	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-		baseURL = "http://" + baseURL
-	}
-
-	client := NewMemosClient(baseURL)
+	client := NewMemosClient(config.ServerAddr)
 
 	store := store.NewStore(config.Data)
 	if err := store.Init(); err != nil {
@@ -69,7 +60,7 @@ func NewService() (*Service, error) {
 		config:           config,
 		client:           client,
 		store:            store,
-		httpClient:       http.DefaultClient,
+		httpClient:       &http.Client{Timeout: 60 * time.Second},
 		allowedUsernames: allowedUsernames,
 	}
 
@@ -92,14 +83,21 @@ func NewService() (*Service, error) {
 
 func (s *Service) Start(ctx context.Context) {
 	slog.Info("Memogram started")
-	// Try to get instance profile.
-	resp, err := s.client.InstanceService.GetInstanceProfile(ctx, connect.NewRequest(&v1pb.GetInstanceProfileRequest{}))
-	if err != nil {
-		slog.Warn("failed to get instance profile", slog.Any("err", err))
-	} else {
-		instanceProfile := resp.Msg
-		slog.Info("instance profile", slog.Any("profile", instanceProfile))
-		s.instanceProfile = instanceProfile
+	// Select the API base path before polling Telegram, including when Memos
+	// starts later than Memogram in a Compose deployment.
+	for {
+		profile, err := s.client.GetInstanceProfile(ctx)
+		if err == nil {
+			slog.Info("instance profile", slog.String("version", profile.Version))
+			s.instanceProfile = profile
+			break
+		}
+		slog.Warn("waiting for Memos instance profile", slog.Any("err", err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
 	}
 
 	// set bot commands
@@ -113,7 +111,7 @@ func (s *Service) Start(ctx context.Context) {
 			Description: "Search for the memos",
 		},
 	}
-	_, err = s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
+	_, err := s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
 	if err != nil {
 		slog.Error("failed to set bot commands", slog.Any("err", err))
 	}
@@ -121,21 +119,17 @@ func (s *Service) Start(ctx context.Context) {
 	s.bot.Start(ctx)
 }
 
-func (s *Service) createMemo(ctx context.Context, client *MemosClient, content string) (*v1pb.Memo, error) {
-	resp, err := client.MemoService.CreateMemo(ctx, connect.NewRequest(&v1pb.CreateMemoRequest{
-		Memo: &v1pb.Memo{
-			Content: content,
-		},
-	}))
+func (s *Service) createMemo(ctx context.Context, client *MemosClient, content string) (*memosapi.Memo, error) {
+	memo, err := client.CreateMemo(ctx, content)
 	if err != nil {
 		slog.Error("failed to create memo", slog.Any("err", err))
 		return nil, fmt.Errorf("create memo: %w", err)
 	}
-	return resp.Msg, nil
+	return memo, nil
 }
 
-func (s *Service) handleMemoCreation(ctx context.Context, client *MemosClient, m *models.Update, content string) (*v1pb.Memo, error) {
-	var memo *v1pb.Memo
+func (s *Service) handleMemoCreation(ctx context.Context, client *MemosClient, m *models.Update, content string) (*memosapi.Memo, error) {
+	var memo *memosapi.Memo
 	var err error
 
 	if m.Message.MediaGroupID != "" {
@@ -143,7 +137,7 @@ func (s *Service) handleMemoCreation(ctx context.Context, client *MemosClient, m
 		defer s.mediaGroupMutex.Unlock()
 
 		if cache, ok := s.mediaGroupCache.Load(m.Message.MediaGroupID); ok {
-			return cache.(*v1pb.Memo), nil
+			return cache.(*memosapi.Memo), nil
 		}
 
 		memo, err = s.createMemo(ctx, client, content)
@@ -263,7 +257,7 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 	accessToken, _ := s.store.GetUserAccessToken(userID)
 	authClient := s.client.NewAuthenticatedClient(accessToken)
 
-	var memo *v1pb.Memo
+	var memo *memosapi.Memo
 	memo, err := s.handleMemoCreation(ctx, authClient, m, content)
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
@@ -273,18 +267,23 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 
-	if message.Document != nil {
-		s.processFileMessage(ctx, authClient, b, m, message.Document.FileID, memo)
+	var fileID string
+	switch {
+	case message.Document != nil:
+		fileID = message.Document.FileID
+	case message.Voice != nil:
+		fileID = message.Voice.FileID
+	case message.Video != nil:
+		fileID = message.Video.FileID
+	case len(message.Photo) > 0:
+		fileID = message.Photo[len(message.Photo)-1].FileID
 	}
-	if message.Voice != nil {
-		s.processFileMessage(ctx, authClient, b, m, message.Voice.FileID, memo)
-	}
-	if message.Video != nil {
-		s.processFileMessage(ctx, authClient, b, m, message.Video.FileID, memo)
-	}
-	if len(message.Photo) > 0 {
-		photo := message.Photo[len(message.Photo)-1]
-		s.processFileMessage(ctx, authClient, b, m, photo.FileID, memo)
+	attachmentFailed := false
+	if fileID != "" {
+		if err := s.processFileMessage(ctx, authClient, b, fileID, memo); err != nil {
+			attachmentFailed = true
+			slog.Error("attachment upload failed", slog.Any("err", err))
+		}
 	}
 
 	memoUID, err := ExtractMemoUIDFromName(memo.Name)
@@ -297,13 +296,13 @@ func (s *Service) handler(ctx context.Context, b *bot.Bot, m *models.Update) {
 		return
 	}
 
-	baseURL := s.config.ServerAddr
-	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
-		baseURL = s.instanceProfile.InstanceUrl
+	text := fmt.Sprintf("Content saved as %s with [%s](%s/memos/%s)", memo.Visibility, memo.Name, s.memoBaseURL(), memoUID)
+	if attachmentFailed {
+		text = fmt.Sprintf("Memo saved, but the attachment failed to upload. [%s](%s/memos/%s)", memo.Name, s.memoBaseURL(), memoUID)
 	}
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:              message.Chat.ID,
-		Text:                fmt.Sprintf("Content saved as %s with [%s](%s/memos/%s)", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, baseURL, memoUID),
+		Text:                text,
 		ParseMode:           models.ParseModeMarkdown,
 		DisableNotification: true,
 		ReplyParameters: &models.ReplyParameters{
@@ -325,7 +324,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 	}
 
 	authClient := s.client.NewAuthenticatedClient(accessToken)
-	resp, err := authClient.AuthService.GetCurrentUser(ctx, connect.NewRequest(&v1pb.GetCurrentUserRequest{}))
+	user, err := authClient.GetCurrentUser(ctx)
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -333,7 +332,6 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 		})
 		return
 	}
-	user := resp.Msg.User
 	s.store.SetUserAccessToken(userID, accessToken)
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: m.Message.Chat.ID,
@@ -341,7 +339,7 @@ func (s *Service) startHandler(ctx context.Context, b *bot.Bot, m *models.Update
 	})
 }
 
-func (s *Service) keyboard(memo *v1pb.Memo) *models.InlineKeyboardMarkup {
+func (s *Service) keyboard(memo *memosapi.Memo) *models.InlineKeyboardMarkup {
 	// add inline keyboard to edit memo's visibility or pinned status.
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
@@ -390,9 +388,7 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 	slog.Info("parts", slog.Any("parts", parts))
 	action, memoName := parts[0], parts[1]
 
-	resp, err := authClient.MemoService.GetMemo(ctx, connect.NewRequest(&v1pb.GetMemoRequest{
-		Name: memoName,
-	}))
+	memo, err := authClient.GetMemo(ctx, memoName)
 	if err != nil {
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 			CallbackQueryID: update.CallbackQuery.ID,
@@ -402,15 +398,13 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
-	memo := resp.Msg
-
 	switch action {
 	case "public":
-		memo.Visibility = v1pb.Visibility_PUBLIC
+		memo.Visibility = memosapi.PUBLIC
 	case "protected":
-		memo.Visibility = v1pb.Visibility_PROTECTED
+		memo.Visibility = memosapi.PROTECTED
 	case "private":
-		memo.Visibility = v1pb.Visibility_PRIVATE
+		memo.Visibility = memosapi.PRIVATE
 	case "pin":
 		memo.Pinned = !memo.Pinned
 	default:
@@ -422,12 +416,7 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 
-	_, e := authClient.MemoService.UpdateMemo(ctx, connect.NewRequest(&v1pb.UpdateMemoRequest{
-		Memo: memo,
-		UpdateMask: &fieldmaskpb.FieldMask{
-			Paths: []string{"visibility", "pinned"},
-		},
-	}))
+	_, e := authClient.UpdateMemo(ctx, memo)
 	if e != nil {
 		slog.Error("failed to update memo", slog.Any("err", e))
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
@@ -453,14 +442,10 @@ func (s *Service) callbackQueryHandler(ctx context.Context, b *bot.Bot, update *
 		})
 		return
 	}
-	baseURL := s.config.ServerAddr
-	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
-		baseURL = s.instanceProfile.InstanceUrl
-	}
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      update.CallbackQuery.Message.Message.Chat.ID,
 		MessageID:   update.CallbackQuery.Message.Message.ID,
-		Text:        fmt.Sprintf("Memo updated as %s with [%s](%s/memos/%s) %s", v1pb.Visibility_name[int32(memo.Visibility)], memo.Name, baseURL, memoUID, pinnedMarker),
+		Text:        fmt.Sprintf("Memo updated as %s with [%s](%s/memos/%s) %s", memo.Visibility, memo.Name, s.memoBaseURL(), memoUID, pinnedMarker),
 		ParseMode:   models.ParseModeMarkdown,
 		ReplyMarkup: s.keyboard(memo),
 	})
@@ -490,7 +475,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		return
 	}
 	authClient := s.client.NewAuthenticatedClient(accessToken)
-	resp, err := authClient.AuthService.GetCurrentUser(ctx, connect.NewRequest(&v1pb.GetCurrentUserRequest{}))
+	user, err := authClient.GetCurrentUser(ctx)
 	if err != nil {
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: m.Message.Chat.ID,
@@ -498,18 +483,12 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 		})
 		return
 	}
-	user := resp.Msg.User
 	filter := buildMemoSearchFilter(searchString, user)
-	results, err := authClient.MemoService.ListMemos(ctx, connect.NewRequest(&v1pb.ListMemosRequest{
-		PageSize: 10,
-		Filter:   filter,
-	}))
+	memos, err := authClient.ListMemos(ctx, filter)
 	if err != nil {
 		slog.Error("failed to search memos", slog.Any("err", err))
 		return
 	}
-
-	memos := results.Msg.GetMemos()
 
 	if len(memos) == 0 {
 		b.SendMessage(ctx, &bot.SendMessageParams{
@@ -517,7 +496,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 			Text:   "No memos found for the specified search criteria.",
 		})
 	} else {
-		for _, memo := range results.Msg.GetMemos() {
+		for _, memo := range memos {
 			tgMessage := memo.Name + "\n" + memo.Content
 			b.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID: m.Message.Chat.ID,
@@ -527,7 +506,7 @@ func (s *Service) searchHandler(ctx context.Context, b *bot.Bot, m *models.Updat
 	}
 }
 
-func buildMemoSearchFilter(searchString string, user *v1pb.User) string {
+func buildMemoSearchFilter(searchString string, user *memosapi.User) string {
 	filter := fmt.Sprintf("content.contains(%q)", searchString)
 	if user == nil {
 		return filter
@@ -544,21 +523,22 @@ func buildMemoSearchFilter(searchString string, user *v1pb.User) string {
 	return fmt.Sprintf("%s && creator == %q", filter, creator)
 }
 
-func (s *Service) processFileMessage(ctx context.Context, client *MemosClient, b *bot.Bot, m *models.Update, fileID string, memo *v1pb.Memo) {
+func (s *Service) processFileMessage(ctx context.Context, client *MemosClient, b *bot.Bot, fileID string, memo *memosapi.Memo) error {
 	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 	if err != nil {
-		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("failed to get file: %w", err))
-		return
+		return fmt.Errorf("get Telegram file: %w", err)
 	}
 
 	_, err = s.saveAttachmentFromFile(ctx, client, file, memo)
-	if err != nil {
-		s.sendError(b, m.Message.Chat.ID, fmt.Errorf("failed to save attachment: %w", err))
-		return
-	}
+	return err
 }
 
-func (s *Service) saveAttachmentFromFile(ctx context.Context, client *MemosClient, file *models.File, memo *v1pb.Memo) (*v1pb.Attachment, error) {
+const maxDownloadBytes = 20 * 1024 * 1024
+
+func (s *Service) saveAttachmentFromFile(ctx context.Context, client *MemosClient, file *models.File, memo *memosapi.Memo) (*memosapi.Attachment, error) {
+	if file.FileSize > maxDownloadBytes {
+		return nil, fmt.Errorf("Telegram file exceeds the 20 MiB download limit")
+	}
 	fileLink := s.bot.FileDownloadLink(file)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileLink, nil)
 	if err != nil {
@@ -567,17 +547,25 @@ func (s *Service) saveAttachmentFromFile(ctx context.Context, client *MemosClien
 
 	response, err := s.httpClient.Do(req)
 	if err != nil {
+		// Download URLs contain the bot token; keep them out of error logs.
+		var downloadErr *url.Error
+		if errors.As(err, &downloadErr) {
+			err = downloadErr.Err
+		}
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusBadRequest {
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("download failed with status %s", response.Status)
 	}
 
-	bytes, err := io.ReadAll(response.Body)
+	bytes, err := io.ReadAll(io.LimitReader(response.Body, maxDownloadBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	if len(bytes) > maxDownloadBytes {
+		return nil, fmt.Errorf("Telegram file exceeds the 20 MiB download limit")
 	}
 
 	contentType := response.Header.Get("Content-Type")
@@ -588,20 +576,24 @@ func (s *Service) saveAttachmentFromFile(ctx context.Context, client *MemosClien
 		contentType = "application/octet-stream"
 	}
 
-	resp, err := client.AttachmentService.CreateAttachment(ctx, connect.NewRequest(&v1pb.CreateAttachmentRequest{
-		Attachment: &v1pb.Attachment{
-			Filename: filepath.Base(file.FilePath),
-			Type:     contentType,
-			Size:     int64(len(bytes)),
-			Content:  bytes,
-			Memo:     &memo.Name,
-		},
-	}))
+	attachment, err := client.CreateAttachment(ctx, memosapi.Attachment{
+		Filename: filepath.Base(file.FilePath), Type: contentType,
+		Content: base64.StdEncoding.EncodeToString(bytes), Memo: memo.Name,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create attachment: %w", err)
 	}
 
-	return resp.Msg, nil
+	return attachment, nil
+}
+
+func (s *Service) memoBaseURL() string {
+	if s.instanceProfile != nil && s.instanceProfile.InstanceUrl != "" {
+		if baseURL, err := normalizeServerAddr(s.instanceProfile.InstanceUrl); err == nil {
+			return baseURL
+		}
+	}
+	return s.client.baseURL
 }
 
 func (s *Service) sendError(b *bot.Bot, chatID int64, err error) {

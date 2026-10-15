@@ -1,17 +1,19 @@
 # Build stage
-FROM cgr.dev/chainguard/go:latest AS builder
+FROM golang:1.27.2-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o memogram ./bin/memogram
-RUN chmod +x memogram
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -o /memogram ./bin/memogram
+RUN mkdir /data && chown 65532:65532 /data
 
 # Run stage
-FROM cgr.dev/chainguard/static:latest-glibc
+FROM cgr.dev/chainguard/static:latest
 WORKDIR /app
-ENV SERVER_ADDR=dns:localhost:5230
-ENV BOT_TOKEN=your_telegram_bot_token
-COPY .env.example .env
-COPY --from=builder /app/memogram .
-CMD ["./memogram"]
+ENV DATA=/data/data.txt
+COPY --from=builder --chown=65532:65532 /data /data
+COPY --from=builder /memogram /app/memogram
+USER 65532:65532
+ENTRYPOINT ["/app/memogram"]

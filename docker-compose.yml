@@ -1,0 +1,14 @@
+services:
+  memogram:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA: /data/data.txt
+    volumes:
+      - memogram-data:/data
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+volumes:
+  memogram-data:

@@ -1,0 +1,20 @@
+package: memosapi
+generate:
+  models: true
+  client: true
+output: internal/memosapi/client.gen.go
+output-options:
+  prefer-skip-optional-pointer: true
+  prefer-skip-optional-pointer-with-omitzero: true
+  include-operation-ids:
+    - InstanceService_GetInstanceProfile
+    - AuthService_GetCurrentUser
+    - AuthService_SignIn
+    - UserService_CreateUser
+    - UserService_CreatePersonalAccessToken
+    - MemoService_CreateMemo
+    - MemoService_ListMemos
+    - MemoService_GetMemo
+    - MemoService_UpdateMemo
+    - MemoService_ListMemoAttachments
+    - AttachmentService_CreateAttachment

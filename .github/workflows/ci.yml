@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./bin/memogram
+      - run: go generate ./...
+      - run: git diff --exit-code -- openapi internal/memosapi
+
+  memos-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        memos: ["canary", "0.30.0", "0.31.0"]
+    services:
+      memos:
+        image: neosmemo/memos:${{ matrix.memos }}
+        env:
+          MEMOS_MODE: prod
+        ports:
+          - 5230:5230
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -run TestMemosIntegration -count=1 -v .
+        env:
+          MEMOS_TEST_URL: http://127.0.0.1:5230
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build -t memogram:ci .
+      - run: python3 scripts/test-container.py memogram:ci

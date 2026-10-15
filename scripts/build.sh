@@ -10,11 +10,10 @@ cd "$(dirname "$0")/../"
 OS=$(uname -s)
 
 # Set output file name based on the OS
-if [[ "$OS" == *"CYGWIN"* || "$OS" == *"MINGW"* || "$OS" == *"MSYS"* ]]; then
-  OUTPUT="./build/memogram.exe"
-else
-  OUTPUT="./build/memogram"
-fi
+case "$OS" in
+  *CYGWIN*|*MINGW*|*MSYS*) OUTPUT="./build/memogram.exe" ;;
+  *) OUTPUT="./build/memogram" ;;
+esac
 
 echo "Building for $OS..."
 

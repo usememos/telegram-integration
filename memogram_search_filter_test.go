@@ -3,11 +3,11 @@ package memogram
 import (
 	"testing"
 
-	v1pb "github.com/usememos/memos/proto/gen/api/v1"
+	"github.com/usememos/memogram/internal/memosapi"
 )
 
 func TestBuildMemoSearchFilterUsesUsernameResourceName(t *testing.T) {
-	got := buildMemoSearchFilter("needle", &v1pb.User{
+	got := buildMemoSearchFilter("needle", &memosapi.User{
 		Name:     "users/alice",
 		Username: "alice",
 	})
@@ -18,7 +18,7 @@ func TestBuildMemoSearchFilterUsesUsernameResourceName(t *testing.T) {
 }
 
 func TestBuildMemoSearchFilterFallsBackToUsername(t *testing.T) {
-	got := buildMemoSearchFilter("needle", &v1pb.User{
+	got := buildMemoSearchFilter("needle", &memosapi.User{
 		Username: "alice",
 	})
 	want := `content.contains("needle") && creator == "users/alice"`
@@ -28,7 +28,7 @@ func TestBuildMemoSearchFilterFallsBackToUsername(t *testing.T) {
 }
 
 func TestBuildMemoSearchFilterEscapesSearchString(t *testing.T) {
-	got := buildMemoSearchFilter(`quote " test`, &v1pb.User{Name: "users/alice"})
+	got := buildMemoSearchFilter(`quote " test`, &memosapi.User{Name: "users/alice"})
 	want := `content.contains("quote \" test") && creator == "users/alice"`
 	if got != want {
 		t.Fatalf("unexpected filter:\nwant: %q\ngot:  %q", want, got)
