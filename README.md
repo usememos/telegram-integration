@@ -31,7 +31,7 @@ DATA=data.txt
 - `BOT_TOKEN`: Your Telegram bot token
 - `BOT_PROXY_ADDR`: Optional alternative Telegram API server URL (leave empty if not needed). This is not an HTTP CONNECT proxy.
 - `ALLOWED_USERNAMES`: Optional comma-separated list of allowed usernames (without @ symbol)
-- `DATA`: Token binding file, defaulting to `data.txt` for binaries and `/data/data.txt` inside the container. Its parent directory must be writable. Persist this file across upgrades and keep it private: it contains Memos access tokens.
+- `DATA`: Token binding file, defaulting to `data.txt` for binaries and `/data/data.txt` inside the container. Its parent directory must be writable. Persist this file across upgrades and keep it private: it contains Memos access tokens. It holds one JSON object per user. Files written by versions before Spaces support are read as before and converted on the next change, so downgrading after that point requires every user to send `/start` again.
 
 ### Username Restrictions
 
@@ -56,7 +56,7 @@ The `ALLOWED_USERNAMES` environment variable allows you to restrict bot usage to
 - Usernames must not include the @ symbol
 - When the allowlist is set, users must have a matching Telegram username. With no allowlist, users without a username can also use the bot.
 - Matching is case-insensitive and trims whitespace
-- Users outside the allowed list receive an error reply.
+- Users outside the allowed list receive an error reply, including when they press a button on an earlier message.
 
 Memogram uses Memos' HTTP REST API. At startup it discovers `/api` (latest) or `/api/v1` (0.30/0.31) through the read-only instance profile endpoint.
 
@@ -118,19 +118,34 @@ Update with `git pull --ff-only` followed by `sh scripts/build.sh compose up -d 
 - Send text messages: Save the message content as a memo.
 - Send photos, documents, voice messages, or videos: Save the files as attachments in a memo.
 - `/search <words>`: Search for the memos.
+- `/space`: Choose a default space for new memos, or "No space" to keep them private. Requires Memos 0.31 or later.
+
+Each saved memo gets buttons to make it public or private, to pin it, and, on Memos 0.31 or later, to move it into one of your spaces. A memo placed in a space gets `SPACE` visibility, so that the space's members can see it. "No space" takes it out again and makes a `SPACE` memo private.
+
+If your default space is deleted or you leave it, the next memo is saved without it, the bot tells you so, and the default is cleared.
 
 If an attachment cannot be downloaded or uploaded, the bot replies that the memo was saved but the attachment failed, with a link to that memo. Downloads are limited to 20 MiB and HTTP requests have a 60-second timeout.
 
 ## Development
 
-Requires Go 1.27.2 or newer.
+Requires Go 1.27.2 or newer. Linting uses [golangci-lint](https://golangci-lint.run) 2.15.0 with the settings in `.golangci.yml`; build it with that Go version or newer, for example `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`.
 
 ```sh
 go test -race ./...
 go vet ./...
+golangci-lint run
 sh scripts/build.sh
 ./build/memogram --version
 ```
+
+Code layout:
+
+- `cmd/memogram`: the entrypoint. It loads the configuration and wires the store, the Memos client and the bot together.
+- `internal/bot`: the Telegram handlers for memo capture, attachments, albums, commands and memo buttons.
+- `internal/memos`: the Memos client and API version discovery, built on the generated `internal/memosapi`.
+- `internal/config`: environment configuration.
+- `internal/store`: the file that binds Telegram users to access tokens.
+- `internal/version`: build metadata.
 
 The REST client is generated from the versioned OpenAPI specifications in [usememos/dotcom](https://github.com/usememos/dotcom/tree/main/openapi). See [openapi/README.md](openapi/README.md) for generation and supported-version updates.
 
@@ -139,13 +154,13 @@ To run the business compatibility scenarios, start a **fresh, disposable** Memos
 ```sh
 docker run --rm -d --name memogram-memos-test \
   -e MEMOS_MODE=prod -p 127.0.0.1:5231:5230 neosmemo/memos:0.31.0
-MEMOS_TEST_URL=http://127.0.0.1:5231 go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v .
+MEMOS_TEST_URL=http://127.0.0.1:5231 go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v ./internal/bot
 docker rm -f memogram-memos-test
 ```
 
 CI runs the same scenarios against `canary` (latest development), `0.30.0`, and `0.31.0`, with the race detector enabled. Ordinary `go test` skips this integration test unless `MEMOS_TEST_URL` is set. The test creates an administrator for setup, then uses two ordinary users and their Personal Access Tokens for business operations. It refuses to run against an instance that already has users.
 
-The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; and invalid or revoked tokens. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
+The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; invalid or revoked tokens; and, on 0.31 and later, moving memos into and out of a space, the default space, and a default space that was deleted. On 0.30 they check that spaces are reported as unsupported. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
 
 Verify container startup and binding persistence separately:
 
@@ -164,7 +179,7 @@ The first CalVer release is **26.10.0**, following the historical `v0.5.0` relea
 
 New release tags have no `v` prefix, and months are always two digits. Bare month names such as `26.10` are not release tags. Historical `v0.x` releases remain available.
 
-`--version` prints the version and commit without loading configuration or contacting Telegram. Startup logs include the same metadata. Release builds inject the exact tag; ordinary Go package builds derive development metadata from Git. For `go run`, use `go run -buildvcs=true ./bin/memogram --version`.
+`--version` prints the version and commit without loading configuration or contacting Telegram. Startup logs include the same metadata. Release builds inject the exact tag; ordinary Go package builds derive development metadata from Git. For `go run`, use `go run -buildvcs=true ./cmd/memogram --version`.
 
 The build script supplies metadata for binary, Docker, and Compose builds. Docker's context excludes `.git`, so direct Docker builds must provide `--build-arg VERSION=... --build-arg COMMIT=...`. To build the first release locally without creating a Git tag or publishing:
 

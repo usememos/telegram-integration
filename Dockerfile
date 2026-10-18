@@ -11,7 +11,7 @@ ARG COMMIT
 RUN test -n "$VERSION" && test -n "$COMMIT" && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X github.com/usememos/memogram/internal/version.Version=${VERSION} -X github.com/usememos/memogram/internal/version.Commit=${COMMIT}" \
-    -o /memogram ./bin/memogram && /memogram --version
+    -o /memogram ./cmd/memogram && /memogram --version
 RUN mkdir /data && chown 65532:65532 /data
 
 # Run stage

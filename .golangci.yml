@@ -1,0 +1,43 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus
+  # checks that catch real defects in a network-facing bot.
+  enable:
+    - errorlint
+    - gocritic
+    - misspell
+    - nolintlint
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      exclude-functions:
+        # Writes to an httptest.ResponseRecorder or a test server's writer.
+        - fmt.Fprint
+        - fmt.Fprintf
+        # Closing a response body that has been read cannot lose data.
+        - (io.ReadCloser).Close
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: strict
+    paths:
+      - internal/memosapi
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/usememos/memogram
+  exclusions:
+    generated: strict
+    paths:
+      - internal/memosapi

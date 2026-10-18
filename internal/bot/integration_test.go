@@ -1,9 +1,8 @@
-package memogram
+package bot
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -25,92 +24,16 @@ import (
 	"time"
 
 	"github.com/go-telegram/bot/models"
+
+	"github.com/usememos/memogram/internal/memos"
 	"github.com/usememos/memogram/internal/memosapi"
-	"github.com/usememos/memogram/store"
 )
 
 type integrationUser struct {
 	user          *memosapi.User
-	session, auth *MemosClient
+	session, auth *memos.Client
 	pat           *memosapi.CreatePersonalAccessTokenResponse
 	telegramID    int64
-}
-
-type telegramCall struct {
-	method, text string
-	chatID       int64
-	keyboard     models.InlineKeyboardMarkup
-}
-type telegramFile struct {
-	path, contentType string
-	content           []byte
-}
-
-type integrationTelegram struct {
-	mu    sync.Mutex
-	calls []telegramCall
-	files map[string]telegramFile
-}
-
-func (tg *integrationTelegram) snapshot() []telegramCall {
-	tg.mu.Lock()
-	defer tg.mu.Unlock()
-	return append([]telegramCall(nil), tg.calls...)
-}
-
-func (tg *integrationTelegram) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
-	t.Helper()
-	if strings.HasPrefix(r.URL.Path, "/file/") {
-		for _, file := range tg.files {
-			if strings.HasSuffix(r.URL.Path, "/"+file.path) {
-				w.Header().Set("Content-Type", file.contentType)
-				_, _ = w.Write(file.content)
-				return
-			}
-		}
-		http.NotFound(w, r)
-		return
-	}
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Error(err)
-		}
-		if r.MultipartForm != nil {
-			defer r.MultipartForm.RemoveAll()
-		}
-	} else if err := r.ParseForm(); err != nil {
-		t.Error(err)
-	}
-	method := filepath.Base(r.URL.Path)
-	w.Header().Set("Content-Type", "application/json")
-	switch method {
-	case "getFile":
-		id := r.FormValue("file_id")
-		if file, ok := tg.files[id]; ok {
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{"file_id": id, "file_path": file.path, "file_size": len(file.content)}})
-		} else {
-			fmt.Fprint(w, `{"ok":false,"error_code":400,"description":"file unavailable"}`)
-		}
-	case "sendMessage", "editMessageText", "answerCallbackQuery":
-		chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
-		var keyboard models.InlineKeyboardMarkup
-		if markup := r.FormValue("reply_markup"); markup != "" {
-			if err := json.Unmarshal([]byte(markup), &keyboard); err != nil {
-				t.Errorf("invalid keyboard: %v", err)
-			}
-		}
-		tg.mu.Lock()
-		tg.calls = append(tg.calls, telegramCall{method: method, text: r.FormValue("text"), chatID: chatID, keyboard: keyboard})
-		tg.mu.Unlock()
-		if method == "answerCallbackQuery" {
-			fmt.Fprint(w, `{"ok":true,"result":true}`)
-		} else {
-			fmt.Fprint(w, `{"ok":true,"result":{"message_id":2}}`)
-		}
-	default:
-		t.Errorf("unexpected Telegram method %s", method)
-		w.WriteHeader(http.StatusNotFound)
-	}
 }
 
 // MEMOS_TEST_URL must point to a fresh, disposable Memos instance. All scenarios
@@ -122,7 +45,7 @@ func TestMemosIntegration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	client := NewMemosClient(baseURL)
+	client := memos.NewClient(baseURL)
 	var profile *memosapi.InstanceProfile
 	var err error
 	for ctx.Err() == nil {
@@ -140,29 +63,29 @@ func TestMemosIntegration(t *testing.T) {
 	}
 	t.Logf("testing Memos %s", profile.Version)
 
-	newUser := func(creator *MemosClient, username string, role memosapi.UserRole, id int64) integrationUser {
+	newUser := func(creator *memos.Client, username string, role memosapi.UserRole, id int64) integrationUser {
 		t.Helper()
-		user, err := decodeAPIResponse[memosapi.User](creator.api.UserServiceCreateUser(ctx, nil, memosapi.User{Username: username, Password: "integration-test-password", Role: role, State: memosapi.UserStateNORMAL, DisplayName: username}))
+		user, err := memos.DecodeResponse[memosapi.User](creator.API().UserServiceCreateUser(ctx, nil, memosapi.User{Username: username, Password: "integration-test-password", Role: role, State: memosapi.UserStateNORMAL, DisplayName: username}))
 		if err != nil {
 			t.Fatalf("create %s: %v", username, err)
 		}
-		signedIn, err := decodeAPIResponse[memosapi.SignInResponse](client.api.AuthServiceSignIn(ctx, memosapi.SignInRequest{PasswordCredentials: memosapi.SignInRequestPasswordCredentials{Username: username, Password: "integration-test-password"}}))
+		signedIn, err := memos.DecodeResponse[memosapi.SignInResponse](client.API().AuthServiceSignIn(ctx, memosapi.SignInRequest{PasswordCredentials: memosapi.SignInRequestPasswordCredentials{Username: username, Password: "integration-test-password"}}))
 		if err != nil {
 			t.Fatalf("sign in %s: %v", username, err)
 		}
-		session := client.NewAuthenticatedClient(signedIn.AccessToken)
-		pat, err := decodeAPIResponse[memosapi.CreatePersonalAccessTokenResponse](session.api.UserServiceCreatePersonalAccessToken(ctx, strings.TrimPrefix(user.Name, "users/"), memosapi.CreatePersonalAccessTokenRequest{Parent: user.Name, Description: "Memogram integration test"}))
+		session := client.WithAccessToken(signedIn.AccessToken)
+		pat, err := memos.DecodeResponse[memosapi.CreatePersonalAccessTokenResponse](session.API().UserServiceCreatePersonalAccessToken(ctx, strings.TrimPrefix(user.Name, "users/"), memosapi.CreatePersonalAccessTokenRequest{Parent: user.Name, Description: "Memogram integration test"}))
 		if err != nil {
 			t.Fatalf("create PAT for %s: %v", username, err)
 		}
 		if pat.Token == "" || pat.PersonalAccessToken.Name == "" {
 			t.Fatal("missing PAT or resource name")
 		}
-		return integrationUser{user: user, session: session, pat: pat, auth: client.NewAuthenticatedClient(pat.Token), telegramID: id}
+		return integrationUser{user: user, session: session, pat: pat, auth: client.WithAccessToken(pat.Token), telegramID: id}
 	}
-	admin := newUser(client, "test-admin", memosapi.ADMIN, 1)
-	alice := newUser(admin.auth, "test-alice", memosapi.USER, 42)
-	bob := newUser(admin.auth, "test-bob", memosapi.USER, 43)
+	admin := newUser(client, "test-admin", memosapi.UserRoleADMIN, 1)
+	alice := newUser(admin.auth, "test-alice", memosapi.UserRoleUSER, 42)
+	bob := newUser(admin.auth, "test-bob", memosapi.UserRoleUSER, 43)
 
 	var picture bytes.Buffer
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
@@ -170,26 +93,23 @@ func TestMemosIntegration(t *testing.T) {
 	if err := png.Encode(&picture, img); err != nil {
 		t.Fatal(err)
 	}
-	tg := &integrationTelegram{files: map[string]telegramFile{
+	tg := newFakeTelegram(t, map[string]fakeFile{
 		"document": {path: "docs/test.txt", contentType: "text/plain", content: []byte("saved document bytes")},
 		"photo":    {path: "photos/image.png", contentType: "image/png", content: picture.Bytes()},
 		// Small transport fixtures: the bot stores these bytes; it does not decode media.
 		"voice": {path: "voice/note.ogg", contentType: "audio/ogg", content: []byte("OggS\x00voice fixture")},
 		"video": {path: "video/clip.mp4", contentType: "video/mp4", content: []byte("\x00\x00\x00\x18ftypmp42video fixture")},
-	}}
-	b := newTestBot(t, func(w http.ResponseWriter, r *http.Request) { tg.serve(t, w, r) })
-	data := store.NewStore(filepath.Join(t.TempDir(), "data.txt"))
-	if err := data.Init(); err != nil {
-		t.Fatal(err)
-	}
-	s := &Service{bot: b, client: client, config: &Config{ServerAddr: baseURL}, store: data, httpClient: &http.Client{Timeout: 10 * time.Second}, instanceProfile: profile}
+	})
+	data := openStore(t)
+	s := newTestService(t, tg, Options{Memos: client, Store: data})
+	s.useInstanceProfile(profile)
 	message := func(u integrationUser, text string) *models.Message {
-		return &models.Message{ID: 1, Chat: models.Chat{ID: u.telegramID, Type: models.ChatTypePrivate}, From: &models.User{ID: u.telegramID}, Text: text}
+		return textMessage(u.telegramID, text)
 	}
 	send := func(t *testing.T, m *models.Message, want string) telegramCall {
 		t.Helper()
 		before := len(tg.snapshot())
-		s.handler(ctx, b, &models.Update{Message: m})
+		s.bot.ProcessUpdate(ctx, &models.Update{Message: m})
 		calls := tg.snapshot()[before:]
 		if len(calls) != 1 || calls[0].method != "sendMessage" || calls[0].chatID != m.Chat.ID || !strings.Contains(calls[0].text, want) {
 			t.Fatalf("want one reply containing %q to chat %d, got %+v", want, m.Chat.ID, calls)
@@ -213,7 +133,7 @@ func TestMemosIntegration(t *testing.T) {
 	}
 	listAttachments := func(t *testing.T, u integrationUser, memo *memosapi.Memo) []memosapi.Attachment {
 		t.Helper()
-		result, err := decodeAPIResponse[memosapi.ListMemoAttachmentsResponse](u.auth.api.MemoServiceListMemoAttachments(ctx, strings.TrimPrefix(memo.Name, "memos/"), nil))
+		result, err := memos.DecodeResponse[memosapi.ListMemoAttachmentsResponse](u.auth.API().MemoServiceListMemoAttachments(ctx, strings.TrimPrefix(memo.Name, "memos/"), nil))
 		if err != nil {
 			t.Fatalf("list attachments: %v", err)
 		}
@@ -225,7 +145,7 @@ func TestMemosIntegration(t *testing.T) {
 		if len(attachments) != len(ids) {
 			t.Fatalf("want %d attachments, got %d", len(ids), len(attachments))
 		}
-		want := map[string]telegramFile{}
+		want := map[string]fakeFile{}
 		for _, id := range ids {
 			file := tg.files[id]
 			want[filepath.Base(file.path)] = file
@@ -240,7 +160,7 @@ func TestMemosIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp, err := u.auth.httpClient.Do(req)
+			resp, err := u.auth.HTTPClient().Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -253,7 +173,7 @@ func TestMemosIntegration(t *testing.T) {
 	}
 	requireStatus := func(t *testing.T, err error, want ...int) {
 		t.Helper()
-		var apiErr *MemosAPIError
+		var apiErr *memos.APIError
 		if errors.As(err, &apiErr) {
 			for _, code := range want {
 				if apiErr.StatusCode == code {
@@ -266,11 +186,11 @@ func TestMemosIntegration(t *testing.T) {
 
 	// Bind in shared setup so individual scenarios also work with -run filters.
 	for _, u := range []integrationUser{alice, bob} {
-		if u.user.Role != memosapi.USER {
+		if u.user.Role != memosapi.UserRoleUSER {
 			t.Fatal("business scenarios require ordinary users")
 		}
 		send(t, message(u, "/start "+u.pat.Token), "Hello "+u.user.DisplayName)
-		if token, ok := data.GetUserAccessToken(u.telegramID); !ok || token != u.pat.Token {
+		if token, ok := data.AccessToken(u.telegramID); !ok || token != u.pat.Token {
 			t.Fatal("PAT binding was not saved")
 		}
 	}
@@ -344,12 +264,12 @@ func TestMemosIntegration(t *testing.T) {
 			proxy.ServeHTTP(w, r)
 		}))
 		defer server.Close()
-		proxied := NewMemosClient(server.URL)
+		proxied := memos.NewClient(server.URL)
 		if _, err := proxied.GetInstanceProfile(ctx); err != nil {
 			t.Fatal(err)
 		}
-		s.client = proxied
-		defer func() { s.client = client }()
+		s.memos = proxied
+		defer func() { s.memos = client }()
 		m := message(alice, "")
 		m.Caption = "integration upload failure"
 		m.Photo = []models.PhotoSize{{FileID: "photo"}}
@@ -389,7 +309,7 @@ func TestMemosIntegration(t *testing.T) {
 			t.Fatal("failed album item created a duplicate memo")
 		}
 		checkFiles(t, alice, memo, "photo", "document")
-		found, err := alice.auth.ListMemos(ctx, buildMemoSearchFilter(first.Caption, alice.user))
+		found, err := alice.auth.ListMemos(ctx, memos.SearchFilter(first.Caption, alice.user))
 		if err != nil || len(found) != 1 {
 			t.Fatalf("album created duplicate memos: count=%d err=%v", len(found), err)
 		}
@@ -403,7 +323,7 @@ func TestMemosIntegration(t *testing.T) {
 			m.Caption = "integration concurrent album"
 			m.MediaGroupID = "concurrent-album"
 			m.Document = &models.Document{FileID: id}
-			wg.Go(func() { s.handler(ctx, b, &models.Update{Message: m}) })
+			wg.Go(func() { s.bot.ProcessUpdate(ctx, &models.Update{Message: m}) })
 		}
 		wg.Wait()
 		calls := tg.snapshot()[before:]
@@ -421,12 +341,18 @@ func TestMemosIntegration(t *testing.T) {
 			t.Fatal("concurrent album created two memos")
 		}
 		checkFiles(t, bob, first, "photo", "document")
-		found, err := bob.auth.ListMemos(ctx, buildMemoSearchFilter("integration concurrent album", bob.user))
+		found, err := bob.auth.ListMemos(ctx, memos.SearchFilter("integration concurrent album", bob.user))
 		if err != nil || len(found) != 1 {
 			t.Fatalf("concurrent album count=%d err=%v", len(found), err)
 		}
 	})
 
+	pressButton := func(t *testing.T, u integrationUser, data string) []telegramCall {
+		t.Helper()
+		before := len(tg.snapshot())
+		s.bot.ProcessUpdate(ctx, &models.Update{CallbackQuery: &models.CallbackQuery{ID: "callback", From: models.User{ID: u.telegramID}, Data: data, Message: models.MaybeInaccessibleMessage{Type: models.MaybeInaccessibleMessageTypeMessage, Message: message(u, "")}}})
+		return tg.snapshot()[before:]
+	}
 	callback := func(t *testing.T, u integrationUser, action, name, want string, success bool) {
 		t.Helper()
 		// Use the callback data emitted by the actual keyboard for visible actions.
@@ -447,9 +373,7 @@ func TestMemosIntegration(t *testing.T) {
 				t.Fatalf("keyboard is missing %s button for %s", action, name)
 			}
 		}
-		before := len(tg.snapshot())
-		s.callbackQueryHandler(ctx, b, &models.Update{CallbackQuery: &models.CallbackQuery{ID: "callback", From: models.User{ID: u.telegramID}, Data: callbackData, Message: models.MaybeInaccessibleMessage{Type: models.MaybeInaccessibleMessageTypeMessage, Message: message(u, "")}}})
-		calls := tg.snapshot()[before:]
+		calls := pressButton(t, u, callbackData)
 		if success {
 			if len(calls) != 2 || calls[0].method != "editMessageText" || calls[0].chatID != u.telegramID || !strings.Contains(calls[0].text, name) || calls[1].method != "answerCallbackQuery" || calls[1].text != want {
 				t.Fatalf("unexpected callback success: %+v", calls)
@@ -492,7 +416,7 @@ func TestMemosIntegration(t *testing.T) {
 		requireStatus(t, err, 403, 404)
 		modified := *a
 		modified.Pinned = true
-		_, err = bob.auth.UpdateMemo(ctx, &modified)
+		_, err = bob.auth.UpdateMemo(ctx, &modified, memos.FieldPinned)
 		requireStatus(t, err, 403, 404)
 		callback(t, bob, "public", a.Name, "not found", false)
 		_, err = alice.auth.GetMemo(ctx, other.Name)
@@ -519,28 +443,28 @@ func TestMemosIntegration(t *testing.T) {
 		invalid := alice
 		invalid.telegramID = 99
 		send(t, message(invalid, "/start invalid-token"), "Invalid access token")
-		if _, ok := data.GetUserAccessToken(invalid.telegramID); ok {
+		if _, ok := data.AccessToken(invalid.telegramID); ok {
 			t.Fatal("invalid token was bound")
 		}
 		send(t, message(alice, "/start invalid-token"), "Invalid access token")
-		if token, _ := data.GetUserAccessToken(alice.telegramID); token != alice.pat.Token {
+		if token, _ := data.AccessToken(alice.telegramID); token != alice.pat.Token {
 			t.Fatal("invalid rebind replaced working PAT")
 		}
-		_, err := client.NewAuthenticatedClient("invalid-token").GetCurrentUser(ctx)
+		_, err := client.WithAccessToken("invalid-token").GetCurrentUser(ctx)
 		requireStatus(t, err, 401)
-		spare, err := decodeAPIResponse[memosapi.CreatePersonalAccessTokenResponse](alice.session.api.UserServiceCreatePersonalAccessToken(ctx, strings.TrimPrefix(alice.user.Name, "users/"), memosapi.CreatePersonalAccessTokenRequest{Parent: alice.user.Name, Description: "revoked integration token"}))
+		spare, err := memos.DecodeResponse[memosapi.CreatePersonalAccessTokenResponse](alice.session.API().UserServiceCreatePersonalAccessToken(ctx, strings.TrimPrefix(alice.user.Name, "users/"), memosapi.CreatePersonalAccessTokenRequest{Parent: alice.user.Name, Description: "revoked integration token"}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		revoked := alice
 		revoked.telegramID = 100
-		revoked.auth = client.NewAuthenticatedClient(spare.Token)
+		revoked.auth = client.WithAccessToken(spare.Token)
 		send(t, message(revoked, "/start "+spare.Token), "Hello ")
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, baseURL+"/api/"+spare.PersonalAccessToken.Name, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp, err := alice.auth.httpClient.Do(req)
+		resp, err := alice.auth.HTTPClient().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -552,7 +476,7 @@ func TestMemosIntegration(t *testing.T) {
 		requireStatus(t, err, 401)
 		send(t, message(revoked, "/search integration"), "Invalid access token")
 		send(t, message(revoked, "integration revoked must not save"), "Failed to create memo")
-		found, err := alice.auth.ListMemos(ctx, buildMemoSearchFilter("integration revoked must not save", alice.user))
+		found, err := alice.auth.ListMemos(ctx, memos.SearchFilter("integration revoked must not save", alice.user))
 		if err != nil || len(found) != 0 {
 			t.Fatalf("revoked PAT created a memo: count=%d err=%v", len(found), err)
 		}
@@ -564,5 +488,114 @@ func TestMemosIntegration(t *testing.T) {
 		unbound := alice
 		unbound.telegramID = 101
 		send(t, message(unbound, "must not save"), "Please start the bot")
+	})
+
+	buttonData := func(t *testing.T, keyboard models.InlineKeyboardMarkup, text string) string {
+		t.Helper()
+		for _, row := range keyboard.InlineKeyboard {
+			for _, button := range row {
+				if button.Text == text || button.Text == "✓ "+text {
+					return button.CallbackData
+				}
+			}
+		}
+		t.Fatalf("no %q button in %s", text, keyboardLayout(&keyboard))
+		return ""
+	}
+	requireCalls := func(t *testing.T, calls []telegramCall, methods, text string) {
+		t.Helper()
+		var got []string
+		for _, call := range calls {
+			got = append(got, call.method)
+		}
+		if strings.Join(got, ",") != methods || !strings.Contains(calls[0].text, text) {
+			t.Fatalf("want %s with %q, got %+v", methods, text, calls)
+		}
+	}
+
+	t.Run("spaces", func(t *testing.T) {
+		if !memos.SupportsSpaces(profile.Version) {
+			reply := send(t, message(alice, "integration without spaces"), "Content saved as PRIVATE")
+			if strings.Contains(keyboardLayout(&reply.keyboard), "Space") {
+				t.Fatalf("Space button offered: %s", keyboardLayout(&reply.keyboard))
+			}
+			send(t, message(alice, "/space"), spacesUnsupported)
+			memo := savedMemo(t, alice, reply)
+			requireCalls(t, pressButton(t, alice, "space "+memo.Name), "answerCallbackQuery", spacesUnsupported)
+			return
+		}
+
+		space, err := memos.DecodeResponse[memosapi.Space](alice.auth.API().SpaceServiceCreateSpace(ctx, &memosapi.SpaceServiceCreateSpaceParams{SpaceId: "integration-team"}, memosapi.Space{Title: "Integration_Team"}))
+		if err != nil {
+			t.Fatalf("create space: %v", err)
+		}
+		send(t, message(bob, "/space"), noSpaces)
+
+		// Per-memo picker: place a memo in the space, close the picker, and
+		// take the memo out again.
+		reply := send(t, message(alice, "integration space memo"), "Content saved as PRIVATE")
+		memo := savedMemo(t, alice, reply)
+		calls := pressButton(t, alice, buttonData(t, reply.keyboard, "Space"))
+		requireCalls(t, calls, "editMessageReplyMarkup,answerCallbackQuery", "")
+		pick := buttonData(t, calls[0].keyboard, "Integration_Team")
+		requireCalls(t, pressButton(t, alice, pick), "editMessageText,answerCallbackQuery", `Memo updated as SPACE in Integration\_Team`)
+		got, err := alice.auth.GetMemo(ctx, memo.Name)
+		if err != nil || got.Space != space.Name || got.Visibility != memosapi.SPACE || got.Content != memo.Content {
+			t.Fatalf("memo was not placed in the space: %+v, %v", got, err)
+		}
+		requireCalls(t, pressButton(t, bob, pick), "answerCallbackQuery", "not found")
+
+		calls = pressButton(t, alice, "space "+memo.Name)
+		if !strings.Contains(keyboardLayout(&calls[0].keyboard), "✓ Integration_Team=") {
+			t.Fatalf("current space is not marked: %s", keyboardLayout(&calls[0].keyboard))
+		}
+		requireCalls(t, pressButton(t, alice, buttonData(t, calls[0].keyboard, "Back")), "editMessageReplyMarkup,answerCallbackQuery", "")
+		requireCalls(t, pressButton(t, alice, buttonData(t, calls[0].keyboard, "No space")), "editMessageText,answerCallbackQuery", "Memo updated as PRIVATE")
+		got, err = alice.auth.GetMemo(ctx, memo.Name)
+		if err != nil || got.Space != "" || got.Visibility != memosapi.PRIVATE {
+			t.Fatalf("memo was not removed from the space: %+v, %v", got, err)
+		}
+
+		// Default space for new memos.
+		reply = send(t, message(alice, "/space"), "New memos are private.")
+		requireCalls(t, pressButton(t, alice, buttonData(t, reply.keyboard, "Integration_Team")), "editMessageText,answerCallbackQuery", "New memos will be saved in Integration_Team.")
+		if data.DefaultSpace(alice.telegramID).Name != space.Name {
+			t.Fatal("default space was not saved")
+		}
+		placed := savedMemo(t, alice, send(t, message(alice, "integration default space memo"), `Content saved as SPACE in Integration\_Team`))
+		if placed.Space != space.Name || placed.Visibility != memosapi.SPACE {
+			t.Fatalf("new memo is not in the default space: %+v", placed)
+		}
+
+		// Deleting the space makes the default unavailable: the memo is
+		// saved without it, and the default is cleared. Empty the space
+		// first, so that deletion does not depend on what the server does
+		// with placed memos.
+		move := *placed
+		move.Space, move.Visibility = "", memosapi.PRIVATE
+		if _, err := alice.auth.UpdateMemo(ctx, &move, memos.FieldSpace, memos.FieldVisibility); err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, baseURL+"/api/"+space.Name, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := alice.auth.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("delete space: HTTP %d", resp.StatusCode)
+		}
+		reply = send(t, message(alice, "integration after space deleted"), `Your default space Integration\_Team is no longer available`)
+		orphan := savedMemo(t, alice, reply)
+		if orphan.Space != "" || orphan.Visibility != memosapi.PRIVATE || orphan.Content != "integration after space deleted" {
+			t.Fatalf("fallback memo: %+v", orphan)
+		}
+		if data.DefaultSpace(alice.telegramID).Name != "" {
+			t.Fatal("unavailable default space was kept")
+		}
+		send(t, message(alice, "/space"), noSpaces)
 	})
 }

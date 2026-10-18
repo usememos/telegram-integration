@@ -8,11 +8,23 @@ import (
 	"testing"
 )
 
+// requireTools skips a test when the release scripts cannot run, such as on
+// Windows without bash.
+func requireTools(t *testing.T) {
+	t.Helper()
+	for _, tool := range []string{"bash", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is required to test the release scripts", tool)
+		}
+	}
+}
+
 func releaseCommand(args ...string) *exec.Cmd {
 	return exec.Command("bash", append([]string{"release_version.sh"}, args...)...)
 }
 
 func TestReleaseTags(t *testing.T) {
+	requireTools(t)
 	for _, tag := range []string{"26.10.0", "26.10.1", "26.01.0", "27.12.0", "26.10.0-rc.1", "26.10.2-rc.12"} {
 		t.Run(tag, func(t *testing.T) {
 			output, err := releaseCommand("version", tag).CombinedOutput()
@@ -58,6 +70,7 @@ func testRepository(t *testing.T) string {
 }
 
 func TestDevelopmentVersionMatchesBinary(t *testing.T) {
+	requireTools(t)
 	repo := testRepository(t)
 	output, err := releaseCommand("development-version", repo).CombinedOutput()
 	if err != nil {
@@ -98,6 +111,7 @@ func TestDevelopmentVersionMatchesBinary(t *testing.T) {
 }
 
 func TestPreviousStableRelease(t *testing.T) {
+	requireTools(t)
 	repo := testRepository(t)
 	git(t, repo, "tag", "v0.5.0")
 	git(t, repo, "commit", "--allow-empty", "-m", "first CalVer release")

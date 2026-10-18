@@ -152,21 +152,42 @@ func (e MotionMediaRole) Valid() bool {
 	}
 }
 
+// Defines values for SpaceCurrentUserRole.
+const (
+	SpaceCurrentUserRoleADMIN           SpaceCurrentUserRole = "ADMIN"
+	SpaceCurrentUserRoleROLEUNSPECIFIED SpaceCurrentUserRole = "ROLE_UNSPECIFIED"
+	SpaceCurrentUserRoleUSER            SpaceCurrentUserRole = "USER"
+)
+
+// Valid indicates whether the value is a known member of the SpaceCurrentUserRole enum.
+func (e SpaceCurrentUserRole) Valid() bool {
+	switch e {
+	case SpaceCurrentUserRoleADMIN:
+		return true
+	case SpaceCurrentUserRoleROLEUNSPECIFIED:
+		return true
+	case SpaceCurrentUserRoleUSER:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for UserRole.
 const (
-	ADMIN           UserRole = "ADMIN"
-	ROLEUNSPECIFIED UserRole = "ROLE_UNSPECIFIED"
-	USER            UserRole = "USER"
+	UserRoleADMIN           UserRole = "ADMIN"
+	UserRoleROLEUNSPECIFIED UserRole = "ROLE_UNSPECIFIED"
+	UserRoleUSER            UserRole = "USER"
 )
 
 // Valid indicates whether the value is a known member of the UserRole enum.
 func (e UserRole) Valid() bool {
 	switch e {
-	case ADMIN:
+	case UserRoleADMIN:
 		return true
-	case ROLEUNSPECIFIED:
+	case UserRoleROLEUNSPECIFIED:
 		return true
-	case USER:
+	case UserRoleUSER:
 		return true
 	default:
 		return false
@@ -352,6 +373,15 @@ type ListMemosResponse struct {
 
 	// NextPageToken A token to retrieve the next page. Empty when there are no more pages.
 	NextPageToken string `json:"nextPageToken,omitempty,omitzero"`
+}
+
+// ListSpacesResponse Response message for SpaceService.ListSpaces.
+type ListSpacesResponse struct {
+	// NextPageToken A token to retrieve the next page. Empty when there are no more pages.
+	NextPageToken string `json:"nextPageToken,omitempty,omitzero"`
+
+	// Spaces The spaces of which the caller is a member.
+	Spaces []Space `json:"spaces,omitempty,omitzero"`
 }
 
 // Location Location is a geographic location attached to a memo.
@@ -679,6 +709,45 @@ type SignInResponse struct {
 	User User `json:"user,omitempty,omitzero"`
 }
 
+// Space Space is a collaboration boundary for placed memos.
+type Space struct {
+	// CurrentUserRole Output only. The authenticated user's membership role in this space.
+	//  ROLE_UNSPECIFIED when this space is exposed as metadata only.
+	CurrentUserRole SpaceCurrentUserRole `json:"currentUserRole,omitempty,omitzero"`
+
+	// Description Optional. A description of the space.
+	Description string `json:"description,omitempty,omitzero"`
+
+	// Icon Optional. The display icon. Omit it when updating with the "icon" mask to
+	//  reset to the default space mark.
+	Icon SpaceIcon `json:"icon,omitempty,omitzero"`
+
+	// MemberCount Output only. The number of accepted members in this space. Pending
+	//  invitations are excluded. Zero when this space is exposed as metadata only.
+	MemberCount int32 `json:"memberCount,omitempty,omitzero"`
+
+	// Name Identifier. The resource name of the space.
+	//  Format: spaces/{space}
+	Name string `json:"name,omitempty,omitzero"`
+
+	// Title Required. The human-readable title.
+	Title string `json:"title"`
+}
+
+// SpaceCurrentUserRole Output only. The authenticated user's membership role in this space.
+//
+//	ROLE_UNSPECIFIED when this space is exposed as metadata only.
+type SpaceCurrentUserRole string
+
+// SpaceIcon Icon is the display icon of a space.
+type SpaceIcon struct {
+	// Emoji A Unicode emoji sequence.
+	Emoji string `json:"emoji,omitempty,omitzero"`
+
+	// Lucide A canonical Lucide icon name, such as "leaf".
+	Lucide string `json:"lucide,omitempty,omitzero"`
+}
+
 // Status The `Status` type defines a logical error model that is suitable for different programming environments, including REST APIs and RPC APIs. It is used by [gRPC](https://github.com/grpc). Each `Status` message contains three pieces of data: error code, error message, and error details. You can find out more about this error model and how to work with it in the [API Design Guide](https://cloud.google.com/apis/design/errors).
 type Status struct {
 	// Code The status code, which should be an enum value of [google.rpc.Code][google.rpc.Code].
@@ -827,6 +896,23 @@ type MemoServiceListMemoAttachmentsParams struct {
 	PageToken string `form:"pageToken,omitempty" json:"pageToken,omitempty,omitzero"`
 }
 
+// SpaceServiceListSpacesParams defines parameters for SpaceServiceListSpaces.
+type SpaceServiceListSpacesParams struct {
+	// PageSize Optional. The maximum number of spaces to return. The service may return fewer.
+	PageSize int32 `form:"pageSize,omitempty" json:"pageSize,omitempty,omitzero"`
+
+	// PageToken Optional. A page token from a previous call. Provide it to retrieve the next page.
+	PageToken string `form:"pageToken,omitempty" json:"pageToken,omitempty,omitzero"`
+}
+
+// SpaceServiceCreateSpaceParams defines parameters for SpaceServiceCreateSpace.
+type SpaceServiceCreateSpaceParams struct {
+	// SpaceId Optional. The ID to use for the space, which becomes the final segment of
+	//  its resource name. If empty, a UUID v4 is generated. Must match
+	//  ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$.
+	SpaceId string `form:"spaceId,omitempty" json:"spaceId,omitempty,omitzero"`
+}
+
 // UserServiceCreateUserParams defines parameters for UserServiceCreateUser.
 type UserServiceCreateUserParams struct {
 	// UserId Optional. The resource ID to use for this user. If set, it must equal
@@ -852,6 +938,9 @@ type MemoServiceCreateMemoJSONRequestBody = Memo
 
 // MemoServiceUpdateMemoJSONRequestBody defines body for MemoServiceUpdateMemo for application/json ContentType.
 type MemoServiceUpdateMemoJSONRequestBody = Memo
+
+// SpaceServiceCreateSpaceJSONRequestBody defines body for SpaceServiceCreateSpace for application/json ContentType.
+type SpaceServiceCreateSpaceJSONRequestBody = Space
 
 // UserServiceCreateUserJSONRequestBody defines body for UserServiceCreateUser for application/json ContentType.
 type UserServiceCreateUserJSONRequestBody = User
@@ -1085,6 +1174,25 @@ type ClientInterface interface {
 	// ListMemoAttachments lists the attachments of a memo. Requires read access
 	//  to the memo.
 	MemoServiceListMemoAttachments(ctx context.Context, memo string, params *MemoServiceListMemoAttachmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SpaceServiceListSpaces performs a GET /api/spaces (the `SpaceServiceListSpaces` operationId) request.
+	//
+	// ListSpaces lists the spaces of which the authenticated caller is a member.
+	SpaceServiceListSpaces(ctx context.Context, params *SpaceServiceListSpacesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SpaceServiceCreateSpaceWithBody performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// CreateSpace creates a space and makes the authenticated caller its first
+	//  administrator.
+	SpaceServiceCreateSpaceWithBody(ctx context.Context, params *SpaceServiceCreateSpaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SpaceServiceCreateSpace performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// CreateSpace creates a space and makes the authenticated caller its first
+	//  administrator.
+	SpaceServiceCreateSpace(ctx context.Context, params *SpaceServiceCreateSpaceParams, body SpaceServiceCreateSpaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UserServiceCreateUserWithBody performs a POST /api/users (the `UserServiceCreateUser` operationId) request,
 	// with any type of body and a specified content type.
@@ -1335,6 +1443,57 @@ func (c *Client) MemoServiceUpdateMemo(ctx context.Context, memo string, params 
 //	to the memo.
 func (c *Client) MemoServiceListMemoAttachments(ctx context.Context, memo string, params *MemoServiceListMemoAttachmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMemoServiceListMemoAttachmentsRequest(c.Server, memo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SpaceServiceListSpaces performs a GET /api/spaces (the `SpaceServiceListSpaces` operationId) request.
+//
+// ListSpaces lists the spaces of which the authenticated caller is a member.
+func (c *Client) SpaceServiceListSpaces(ctx context.Context, params *SpaceServiceListSpacesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSpaceServiceListSpacesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SpaceServiceCreateSpaceWithBody performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request,
+// with any type of body and a specified content type.
+//
+// CreateSpace creates a space and makes the authenticated caller its first
+//
+//	administrator.
+func (c *Client) SpaceServiceCreateSpaceWithBody(ctx context.Context, params *SpaceServiceCreateSpaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSpaceServiceCreateSpaceRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SpaceServiceCreateSpace performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// CreateSpace creates a space and makes the authenticated caller its first
+//
+//	administrator.
+func (c *Client) SpaceServiceCreateSpace(ctx context.Context, params *SpaceServiceCreateSpaceParams, body SpaceServiceCreateSpaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSpaceServiceCreateSpaceRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1900,6 +2059,127 @@ func NewMemoServiceListMemoAttachmentsRequest(server string, memo string, params
 	return req, nil
 }
 
+// NewSpaceServiceListSpacesRequest constructs an http.Request for the SpaceServiceListSpaces method
+func NewSpaceServiceListSpacesRequest(server string, params *SpaceServiceListSpacesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/spaces")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "pageSize", params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "pageToken", params.PageToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSpaceServiceCreateSpaceRequest calls the generic SpaceServiceCreateSpace builder with application/json body
+func NewSpaceServiceCreateSpaceRequest(server string, params *SpaceServiceCreateSpaceParams, body SpaceServiceCreateSpaceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSpaceServiceCreateSpaceRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewSpaceServiceCreateSpaceRequestWithBody constructs an http.Request for the SpaceServiceCreateSpace method, with any body, and a specified content type
+func NewSpaceServiceCreateSpaceRequestWithBody(server string, params *SpaceServiceCreateSpaceParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/spaces")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "spaceId", params.SpaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewUserServiceCreateUserRequest calls the generic UserServiceCreateUser builder with application/json body
 func NewUserServiceCreateUserRequest(server string, params *UserServiceCreateUserParams, body UserServiceCreateUserJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2174,6 +2454,29 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	MemoServiceListMemoAttachmentsWithResponse(ctx context.Context, memo string, params *MemoServiceListMemoAttachmentsParams, reqEditors ...RequestEditorFn) (*MemoServiceListMemoAttachmentsResponse, error)
+
+	// SpaceServiceListSpacesWithResponse performs a GET /api/spaces (the `SpaceServiceListSpaces` operationId) request.
+	//
+	// ListSpaces lists the spaces of which the authenticated caller is a member.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SpaceServiceListSpacesWithResponse(ctx context.Context, params *SpaceServiceListSpacesParams, reqEditors ...RequestEditorFn) (*SpaceServiceListSpacesResponse, error)
+
+	// SpaceServiceCreateSpaceWithBodyWithResponse performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// CreateSpace creates a space and makes the authenticated caller its first
+	//  administrator.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SpaceServiceCreateSpaceWithBodyWithResponse(ctx context.Context, params *SpaceServiceCreateSpaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SpaceServiceCreateSpaceResponse, error)
+
+	// SpaceServiceCreateSpaceWithResponse performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// CreateSpace creates a space and makes the authenticated caller its first
+	//  administrator.
+	SpaceServiceCreateSpaceWithResponse(ctx context.Context, params *SpaceServiceCreateSpaceParams, body SpaceServiceCreateSpaceJSONRequestBody, reqEditors ...RequestEditorFn) (*SpaceServiceCreateSpaceResponse, error)
 
 	// UserServiceCreateUserWithBodyWithResponse performs a POST /api/users (the `UserServiceCreateUser` operationId) request,
 	// with any type of body and a specified content type.
@@ -2644,6 +2947,102 @@ func (r MemoServiceListMemoAttachmentsResponse) ContentType() string {
 	return ""
 }
 
+type SpaceServiceListSpacesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ListSpacesResponse
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Status
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SpaceServiceListSpacesResponse) GetJSON200() *ListSpacesResponse {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r SpaceServiceListSpacesResponse) GetJSONDefault() *Status {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SpaceServiceListSpacesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SpaceServiceListSpacesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SpaceServiceListSpacesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SpaceServiceListSpacesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SpaceServiceCreateSpaceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Space
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Status
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SpaceServiceCreateSpaceResponse) GetJSON200() *Space {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r SpaceServiceCreateSpaceResponse) GetJSONDefault() *Status {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SpaceServiceCreateSpaceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SpaceServiceCreateSpaceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SpaceServiceCreateSpaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SpaceServiceCreateSpaceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type UserServiceCreateUserResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2930,6 +3329,49 @@ func (c *ClientWithResponses) MemoServiceListMemoAttachmentsWithResponse(ctx con
 		return nil, err
 	}
 	return ParseMemoServiceListMemoAttachmentsResponse(rsp)
+}
+
+// SpaceServiceListSpacesWithResponse performs a GET /api/spaces (the `SpaceServiceListSpaces` operationId) request.
+//
+// ListSpaces lists the spaces of which the authenticated caller is a member.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SpaceServiceListSpacesWithResponse(ctx context.Context, params *SpaceServiceListSpacesParams, reqEditors ...RequestEditorFn) (*SpaceServiceListSpacesResponse, error) {
+	rsp, err := c.SpaceServiceListSpaces(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSpaceServiceListSpacesResponse(rsp)
+}
+
+// SpaceServiceCreateSpaceWithBodyWithResponse performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request,
+// with any type of body and a specified content type.
+//
+// CreateSpace creates a space and makes the authenticated caller its first
+//
+//	administrator.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SpaceServiceCreateSpaceWithBodyWithResponse(ctx context.Context, params *SpaceServiceCreateSpaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SpaceServiceCreateSpaceResponse, error) {
+	rsp, err := c.SpaceServiceCreateSpaceWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSpaceServiceCreateSpaceResponse(rsp)
+}
+
+// SpaceServiceCreateSpaceWithResponse performs a POST /api/spaces (the `SpaceServiceCreateSpace` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// CreateSpace creates a space and makes the authenticated caller its first
+//
+//	administrator.
+func (c *ClientWithResponses) SpaceServiceCreateSpaceWithResponse(ctx context.Context, params *SpaceServiceCreateSpaceParams, body SpaceServiceCreateSpaceJSONRequestBody, reqEditors ...RequestEditorFn) (*SpaceServiceCreateSpaceResponse, error) {
+	rsp, err := c.SpaceServiceCreateSpace(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSpaceServiceCreateSpaceResponse(rsp)
 }
 
 // UserServiceCreateUserWithBodyWithResponse performs a POST /api/users (the `UserServiceCreateUser` operationId) request,
@@ -3276,6 +3718,72 @@ func ParseMemoServiceListMemoAttachmentsResponse(rsp *http.Response) (*MemoServi
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ListMemoAttachmentsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Status
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSpaceServiceListSpacesResponse parses an HTTP response from a SpaceServiceListSpacesWithResponse call
+func ParseSpaceServiceListSpacesResponse(rsp *http.Response) (*SpaceServiceListSpacesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SpaceServiceListSpacesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListSpacesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Status
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSpaceServiceCreateSpaceResponse parses an HTTP response from a SpaceServiceCreateSpaceWithResponse call
+func ParseSpaceServiceCreateSpaceResponse(rsp *http.Response) (*SpaceServiceCreateSpaceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SpaceServiceCreateSpaceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Space
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

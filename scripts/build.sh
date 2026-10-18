@@ -19,7 +19,7 @@ case "$build_target" in
       *CYGWIN*|*MINGW*|*MSYS*) build_output="./build/memogram.exe" ;;
       *) build_output="./build/memogram" ;;
     esac
-    go build -trimpath -ldflags="-s -w -X github.com/usememos/memogram/internal/version.Version=$MEMOGRAM_VERSION -X github.com/usememos/memogram/internal/version.Commit=$MEMOGRAM_COMMIT" -o "$build_output" ./bin/memogram
+    go build -trimpath -ldflags="-s -w -X github.com/usememos/memogram/internal/version.Version=$MEMOGRAM_VERSION -X github.com/usememos/memogram/internal/version.Commit=$MEMOGRAM_COMMIT" -o "$build_output" ./cmd/memogram
     printf 'Built %s (%s) at %s\n' "$MEMOGRAM_VERSION" "$MEMOGRAM_COMMIT" "$build_output"
     ;;
   docker)

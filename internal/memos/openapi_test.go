@@ -1,8 +1,9 @@
-package memogram
+package memos
 
 import (
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,9 +56,9 @@ func TestOpenAPICompatibility(t *testing.T) {
 			Operations []string `yaml:"include-operation-ids"`
 		} `yaml:"output-options"`
 	}
-	readYAML("openapi/oapi-codegen.yaml", &config)
+	readYAML("../../openapi/oapi-codegen.yaml", &config)
 	var latest openAPISnapshot
-	readYAML("openapi/latest.yaml", &latest)
+	readYAML("../../openapi/latest.yaml", &latest)
 	type contract struct{ Method, Path, Request, Response string }
 	contracts := func(spec openAPISnapshot) map[string]contract {
 		result := map[string]contract{}
@@ -74,27 +75,50 @@ func TestOpenAPICompatibility(t *testing.T) {
 		return result
 	}
 	latestContracts := contracts(latest)
-	for _, version := range []string{"0-30", "0-31"} {
+	// Stable series in release order, and the series that introduced features
+	// Memogram uses only when the server has them. Older series are not
+	// checked for those operations and fields.
+	series := []string{"0-30", "0-31"}
+	introduced := map[string]string{
+		"SpaceService_ListSpaces":  "0-31",
+		"SpaceService_CreateSpace": "0-31",
+		"Memo.space":               "0-31",
+		"Space":                    "0-31",
+		"ListSpacesResponse":       "0-31",
+	}
+	has := func(version, item string) bool {
+		since, ok := introduced[item]
+		return !ok || slices.Index(series, version) >= slices.Index(series, since)
+	}
+	for _, version := range series {
 		t.Run(version, func(t *testing.T) {
 			var stable openAPISnapshot
-			readYAML("openapi/"+version+".yaml", &stable)
+			readYAML("../../openapi/"+version+".yaml", &stable)
 			stableContracts := contracts(stable)
 			for _, id := range config.OutputOptions.Operations {
 				want, ok := latestContracts[id]
 				if !ok {
 					t.Fatalf("generated operation %s missing from latest", id)
 				}
+				if !has(version, id) {
+					continue
+				}
 				if got := stableContracts[id]; got != want {
 					t.Errorf("incompatible operation %s: stable=%+v latest=%+v", id, got, want)
 				}
 			}
 			for model, fields := range map[string][]string{
-				"Memo":            {"name", "creator", "content", "visibility", "pinned"},
-				"Attachment":      {"name", "filename", "type", "content", "memo", "size"},
-				"User":            {"name", "username", "displayName"},
-				"InstanceProfile": {"version", "instanceUrl"},
+				"Memo":               {"name", "creator", "content", "visibility", "pinned", "space"},
+				"Attachment":         {"name", "filename", "type", "content", "memo", "size"},
+				"User":               {"name", "username", "displayName"},
+				"InstanceProfile":    {"version", "instanceUrl"},
+				"Space":              {"name", "title"},
+				"ListSpacesResponse": {"spaces", "nextPageToken"},
 			} {
 				for _, field := range fields {
+					if !has(version, model) || !has(version, model+"."+field) {
+						continue
+					}
 					got, exists := stable.Components.Schemas[model].Properties[field]
 					want := latest.Components.Schemas[model].Properties[field]
 					if !exists || !reflect.DeepEqual(got, want) {

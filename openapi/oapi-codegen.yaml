@@ -18,3 +18,5 @@ output-options:
     - MemoService_UpdateMemo
     - MemoService_ListMemoAttachments
     - AttachmentService_CreateAttachment
+    - SpaceService_ListSpaces
+    - SpaceService_CreateSpace

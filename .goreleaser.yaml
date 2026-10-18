@@ -6,7 +6,7 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./bin/memogram
+  - main: ./cmd/memogram
     binary: memogram
     env:
       - CGO_ENABLED=0

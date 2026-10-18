@@ -28,6 +28,21 @@ jobs:
       - run: go generate ./...
       - run: git diff --exit-code -- openapi internal/memosapi
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Build the linter with the module's Go version; release binaries can lag
+      # behind and refuse to analyze newer language versions.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          install-mode: goinstall
+
   memos-compatibility:
     runs-on: ubuntu-latest
     strategy:
@@ -47,7 +62,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v .
+      - run: go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v ./internal/bot
         env:
           MEMOS_TEST_URL: http://127.0.0.1:5230
 

@@ -1,8 +1,30 @@
-package memogram
+package memos
 
 import "testing"
 
-func TestNormalizeServerAddr(t *testing.T) {
+func TestMemoUID(t *testing.T) {
+	for name, want := range map[string]string{
+		"memos/abc":       "abc",
+		"memos/a-b_C1":    "a-b_C1",
+		"memos/":          "",
+		"memos/abc/def":   "",
+		"users/abc":       "",
+		"abc":             "",
+		"":                "",
+		"prefix/memos/ab": "",
+	} {
+		got, err := MemoUID(name)
+		if want == "" {
+			if err == nil {
+				t.Errorf("MemoUID(%q) = %q, want error", name, got)
+			}
+		} else if err != nil || got != want {
+			t.Errorf("MemoUID(%q) = %q, %v; want %q", name, got, err, want)
+		}
+	}
+}
+
+func TestNormalizeBaseURL(t *testing.T) {
 	for _, tc := range []struct{ input, want string }{
 		{"dns:localhost:5230", "http://localhost:5230"},
 		{"localhost:5230", "http://localhost:5230"},
@@ -15,7 +37,7 @@ func TestNormalizeServerAddr(t *testing.T) {
 		{"https://memos.example.com#fragment", ""},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
-			got, err := normalizeServerAddr(tc.input)
+			got, err := NormalizeBaseURL(tc.input)
 			if tc.want == "" {
 				if err == nil {
 					t.Fatalf("expected invalid address, got %q", got)
