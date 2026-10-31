@@ -319,8 +319,9 @@ type InstanceProfile struct {
 	AccessMode InstanceProfileAccessMode `json:"accessMode,omitempty,omitzero"`
 
 	// Admin The first administrator of the instance, for display purposes.
-	//  May be null on an instance that has lost all admins; use needs_setup to determine whether initial setup is
-	//  required.
+	//  Only set for signed-in callers; anonymous requests never receive it, so the admin's login identifier is not
+	//  disclosed before authentication. May also be null on an instance that has lost all admins; use needs_setup to
+	//  determine whether initial setup is required.
 	Admin User `json:"admin,omitempty,omitzero"`
 
 	// Challenge The proof-of-humanity challenge required on signup and password sign-in.
@@ -547,6 +548,9 @@ type MemoProperty struct {
 
 	// HasIncompleteTasks Whether the content contains an unchecked task.
 	HasIncompleteTasks bool `json:"hasIncompleteTasks,omitempty,omitzero"`
+
+	// HasInlineImage Whether the content contains a Markdown image.
+	HasInlineImage bool `json:"hasInlineImage,omitempty,omitzero"`
 
 	// HasLink Whether the content contains a link.
 	HasLink bool `json:"hasLink,omitempty,omitzero"`
@@ -839,7 +843,10 @@ type MemoServiceListMemosParams struct {
 	//      supports == and comparisons against null, e.g. space != null),
 	//    tags (list<string>; match with `"work" in tags`, not `tag == "work"`),
 	//    has_task_list / has_link / has_code / has_incomplete_tasks (bool),
-	//    has_location (bool; true when the memo has a location attached).
+	//    has_location (bool; true when the memo has a location attached),
+	//    has_attachments (bool; true when a file is attached to the memo),
+	//    has_image (bool; true when the content contains a Markdown image or an
+	//      image file is attached).
 	//  Note: the time fields here are created_ts / updated_ts, which differ from
 	//  the create_time / update_time names used by order_by.
 	//  Examples:

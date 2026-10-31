@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Memos service: latest (`main`/`canary`) or one of the two most recent stable series, currently **0.30.x and 0.31.x**
+- Memos service: latest (`main`/`canary`) or one of the two most recent stable series, currently **0.31.x and 26.10.x**
 - Telegram Bot
 
 Older Memos versions are outside the supported range. CI checks the latest image and the two stable releases with real Memos containers.
@@ -58,7 +58,7 @@ The `ALLOWED_USERNAMES` environment variable allows you to restrict bot usage to
 - Matching is case-insensitive and trims whitespace
 - Users outside the allowed list receive an error reply, including when they press a button on an earlier message.
 
-Memogram uses Memos' HTTP REST API. At startup it discovers `/api` (latest) or `/api/v1` (0.30/0.31) through the read-only instance profile endpoint.
+Memogram uses Memos' HTTP REST API. At startup it discovers `/api` (26.10 and later) or `/api/v1` (0.31) through the read-only instance profile endpoint.
 
 ## Usage
 
@@ -153,14 +153,14 @@ To run the business compatibility scenarios, start a **fresh, disposable** Memos
 
 ```sh
 docker run --rm -d --name memogram-memos-test \
-  -e MEMOS_MODE=prod -p 127.0.0.1:5231:5230 neosmemo/memos:0.31.0
+  -e MEMOS_MODE=prod -p 127.0.0.1:5231:5230 neosmemo/memos:26.10.0
 MEMOS_TEST_URL=http://127.0.0.1:5231 go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v ./internal/bot
 docker rm -f memogram-memos-test
 ```
 
-CI runs the same scenarios against `canary` (latest development), `0.30.0`, and `0.31.0`, with the race detector enabled. Ordinary `go test` skips this integration test unless `MEMOS_TEST_URL` is set. The test creates an administrator for setup, then uses two ordinary users and their Personal Access Tokens for business operations. It refuses to run against an instance that already has users.
+CI runs the same scenarios against `canary` (latest development), `0.31.0`, and `26.10.0`, with the race detector enabled. Ordinary `go test` skips this integration test unless `MEMOS_TEST_URL` is set. The test creates an administrator for setup, then uses two ordinary users and their Personal Access Tokens for business operations. It refuses to run against an instance that already has users.
 
-The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; invalid or revoked tokens; and, on 0.31 and later, moving memos into and out of a space, the default space, and a default space that was deleted. On 0.30 they check that spaces are reported as unsupported. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
+The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; invalid or revoked tokens; and moving memos into and out of a space, the default space, and a default space that was deleted. Unit tests cover servers without spaces. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
 
 Verify container startup and binding persistence separately:
 

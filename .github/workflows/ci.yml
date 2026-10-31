@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        memos: ["canary", "0.30.0", "0.31.0"]
+        memos: ["canary", "0.31.0", "26.10.0"]
     services:
       memos:
         image: neosmemo/memos:${{ matrix.memos }}

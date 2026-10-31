@@ -508,6 +508,27 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /api/instance/configuration:
+        get:
+            tags:
+                - InstanceService
+            description: |-
+                GetConfigurationStatus gets what declarative configuration manages: the managed resources and the last apply.
+                 Admin only. It carries resource names and field paths, never a configured value.
+            operationId: InstanceService_GetConfigurationStatus
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConfigurationStatus'
+                default:
+                    description: Default error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
     /api/instance/profile:
         get:
             tags:
@@ -627,8 +648,8 @@ paths:
             tags:
                 - InstanceService
             description: |-
-                UpdateInstanceSetting replaces an instance setting. Admin only. Settings configured by the deployment cannot be
-                 updated. Empty write-only credentials keep the stored values.
+                UpdateInstanceSetting replaces an instance setting. Admin only. Fields declarative configuration manages cannot be
+                 changed. Empty write-only credentials keep the stored values.
             operationId: InstanceService_UpdateInstanceSetting
             parameters:
                 - name: instance
@@ -698,7 +719,10 @@ paths:
                          supports == and comparisons against null, e.g. space != null),
                        tags (list<string>; match with `"work" in tags`, not `tag == "work"`),
                        has_task_list / has_link / has_code / has_incomplete_tasks (bool),
-                       has_location (bool; true when the memo has a location attached).
+                       has_location (bool; true when the memo has a location attached),
+                       has_attachments (bool; true when a file is attached to the memo),
+                       has_image (bool; true when the content contains a Markdown image or an
+                         image file is attached).
                      Note: the time fields here are created_ts / updated_ts, which differ from
                      the create_time / update_time names used by order_by.
                      Examples:
@@ -2705,6 +2729,34 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /api/users/{user}/usage:
+        get:
+            tags:
+                - UserService
+            description: |-
+                GetUserUsage returns a user's usage and the usage limits in effect for the
+                 user. Only the user or an admin may call it.
+            operationId: UserService_GetUserUsage
+            parameters:
+                - name: user
+                  in: path
+                  description: The user id.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UserUsage'
+                default:
+                    description: Default error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
     /api/users/{user}/views:
         get:
             tags:
@@ -3038,34 +3090,6 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/GetUserWebhookSigningSecretResponse'
-                default:
-                    description: Default error response
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/Status'
-    /api/users/{user}:exportMemos:
-        get:
-            tags:
-                - UserService
-            description: |-
-                ExportMemos writes every memo the user created, with comments, archived
-                 memos, and attachment files, as a Memos export file (a ZIP file, see
-                 docs/design/memos-export-format.md). Only the user may export their own
-                 memos. The body is the archive; content_type is its media type.
-            operationId: UserService_ExportMemos
-            parameters:
-                - name: user
-                  in: path
-                  description: The user id.
-                  required: true
-                  schema:
-                    type: string
-            responses:
-                "200":
-                    description: OK
-                    content:
-                        '*/*': {}
                 default:
                     description: Default error response
                     content:
@@ -3477,6 +3501,53 @@ components:
                      };
 
                      // ...
+        ConfigurationStatus:
+            type: object
+            properties:
+                serial:
+                    type: string
+                    description: The state record serial; zero before any apply has changed something.
+                configDigest:
+                    type: string
+                    description: Identifies the applied configuration, with sensitive values masked before hashing.
+                appliedBy:
+                    type: string
+                    description: The apply path ("cli" or "startup") and the host of the last apply.
+                version:
+                    type: string
+                    description: The Memos version of the last apply.
+                managedResources:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ConfigurationStatus_ManagedResource'
+                    description: The resources the configuration manages.
+                applyTime:
+                    type: string
+                    description: When the last apply that changed something ran.
+                    format: date-time
+            description: ConfigurationStatus is what declarative configuration manages on the instance.
+        ConfigurationStatus_ManagedResource:
+            type: object
+            properties:
+                resource:
+                    type: string
+                    description: |-
+                        The resource name.
+                         Format: identity-providers/{idp}, instance/settings/{setting}, or users/{user}
+                source:
+                    type: string
+                    description: The configuration file that declares the resource.
+                managedFields:
+                    type: array
+                    items:
+                        type: string
+                    description: The field paths, in JSON names, the configuration manages; "*" means the whole resource.
+                ignoredFields:
+                    type: array
+                    items:
+                        type: string
+                    description: The managed field paths the configuration does not write after creation, so the API accepts edits to them.
+            description: ManagedResource is one resource the configuration manages.
         CreateLinkedIdentityRequest:
             required:
                 - parent
@@ -3837,8 +3908,9 @@ components:
                         - $ref: '#/components/schemas/User'
                     description: |-
                         The first administrator of the instance, for display purposes.
-                         May be null on an instance that has lost all admins; use needs_setup to determine whether initial setup is
-                         required.
+                         Only set for signed-in callers; anonymous requests never receive it, so the admin's login identifier is not
+                         disclosed before authentication. May also be null on an instance that has lost all admins; use needs_setup to
+                         determine whether initial setup is required.
                 challenge:
                     allOf:
                         - $ref: '#/components/schemas/InstanceProfile_Challenge'
@@ -3892,6 +3964,10 @@ components:
                     allOf:
                         - $ref: '#/components/schemas/InstanceSetting_AccessSetting'
                     description: The value of the ACCESS setting.
+                usageLimitsSetting:
+                    allOf:
+                        - $ref: '#/components/schemas/InstanceSetting_UsageLimitsSetting'
+                    description: The value of the USAGE_LIMITS setting.
             description: InstanceSetting is one group of instance-wide settings, selected by its key.
         InstanceSetting_AIProviderConfig:
             type: object
@@ -3990,18 +4066,11 @@ components:
         InstanceSetting_MemoRelatedSetting:
             type: object
             properties:
-                contentLengthLimit:
-                    type: integer
-                    description: The maximum memo content length in bytes. Default and minimum is 8192.
-                    format: int32
                 reactions:
                     type: array
                     items:
                         type: string
                     description: The reactions users can choose from. Defaults to a built-in emoji set when empty.
-                enableDoubleClickEdit:
-                    type: boolean
-                    description: Whether double-clicking a memo opens it for editing.
             description: MemoRelatedSetting is the memo-related instance configuration.
         InstanceSetting_NotificationSetting:
             type: object
@@ -4050,9 +4119,6 @@ components:
                     description: |-
                         The template of attachment file paths.
                          Default is assets/{timestamp}_{uuid}_{filename}.
-                uploadSizeLimitMb:
-                    type: string
-                    description: The maximum upload size in megabytes. Default is 30.
                 storageType:
                     enum:
                         - STORAGE_TYPE_UNSPECIFIED
@@ -4115,6 +4181,21 @@ components:
                     type: string
                     description: A default spelling and vocabulary hint passed to the provider. Hidden from non-admins.
             description: TranscriptionConfig is the speech-to-text feature configuration.
+        InstanceSetting_UsageLimitsSetting:
+            type: object
+            properties:
+                limits:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/UsageLimitsSetting_UsageLimit'
+                    description: |-
+                        The entries, in the order they are checked. At most 100, naming at most
+                         1,000 users in all.
+            description: |-
+                UsageLimitsSetting is an ordered list of limit sets. The first entry that
+                 names a user is that user's limit set, whole. The last entry has all_users
+                 set and is the default. The setting is read and replaced whole. Admins
+                 are limited like everyone else.
         InstanceStats:
             type: object
             properties:
@@ -4172,9 +4253,11 @@ components:
                         Output only. The resource name of the identity provider.
                          Format: identity-providers/{idp}
                 externalUid:
-                    readOnly: true
                     type: string
-                    description: Output only. The external user identifier from the identity provider.
+                    description: |-
+                        The external user identifier from the identity provider: the subject that
+                         signs in as this user. Set by signing in through the provider, or declared
+                         in a configuration file for a declared user.
             description: LinkedIdentity is an SSO identity linked to a user account.
         ListAttachmentsResponse:
             type: object
@@ -4696,6 +4779,9 @@ components:
                 hasIncompleteTasks:
                     type: boolean
                     description: Whether the content contains an unchecked task.
+                hasInlineImage:
+                    type: boolean
+                    description: Whether the content contains a Markdown image.
             description: Property holds properties computed from the memo content.
         MotionMedia:
             type: object
@@ -5335,6 +5421,40 @@ components:
                         - $ref: '#/components/schemas/Reaction'
                     description: Required. The reaction to upsert. Only reaction_type is used.
             description: Request message for MemoService.UpsertMemoReaction.
+        UsageLimitsSetting_UsageLimit:
+            type: object
+            properties:
+                users:
+                    type: array
+                    items:
+                        type: string
+                    description: |-
+                        The users the entry applies to. Not repeated within an entry.
+                         Format: users/{user}
+                allUsers:
+                    type: boolean
+                    description: |-
+                        Whether the entry applies to every user. Exactly one entry has it, and
+                         it is the last entry. An entry has users or all_users, never both.
+                memoCount:
+                    type: string
+                    description: |-
+                        The number of memos the user may have created, comments and archived
+                         memos included.
+                memoContentBytes:
+                    type: string
+                    description: The UTF-8 size in bytes of one memo's content.
+                storageBytes:
+                    type: string
+                    description: |-
+                        The total size in bytes of the user's uploads. External links do not
+                         count.
+                uploadBytes:
+                    type: string
+                    description: The size in bytes of one uploaded file.
+            description: |-
+                UsageLimit is one entry: who it applies to and the limit for each
+                 metric. An unset limit is unlimited, as is 0.
         User:
             required:
                 - username
@@ -5550,7 +5670,21 @@ components:
                     allOf:
                         - $ref: '#/components/schemas/UserSetting_TagsSetting'
                     description: The value of the TAGS setting.
+                editorSetting:
+                    allOf:
+                        - $ref: '#/components/schemas/UserSetting_EditorSetting'
+                    description: The value of the EDITOR setting.
             description: UserSetting is one group of a user's preferences, identified by its key.
+        UserSetting_EditorSetting:
+            type: object
+            properties:
+                sourceMode:
+                    type: boolean
+                    description: |-
+                        Optional. Whether the official client's memo editor uses source mode,
+                         which shows and edits memos as Markdown text instead of formatted text.
+                         The official client calls this "Markdown mode".
+            description: EditorSetting holds the user's memo editor preferences.
         UserSetting_GeneralSetting:
             type: object
             properties:
@@ -5679,6 +5813,53 @@ components:
                     description: The number of memos that contain incomplete tasks.
                     format: int32
             description: MemoTypeStats counts memos by the kind of content they contain.
+        UserUsage:
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: |-
+                        Identifier. The resource name of the user usage singleton.
+                         Format: users/{user}/usage
+                memoCount:
+                    type: string
+                    description: |-
+                        The number of memos the user created, including comments, archived
+                         memos, and memos in Spaces.
+                storageBytes:
+                    type: string
+                    description: |-
+                        The total size in bytes of the user's uploads, including uploads not
+                         attached to a memo. External links do not count.
+                limits:
+                    allOf:
+                        - $ref: '#/components/schemas/UserUsage_Limits'
+                    description: |-
+                        The limit set in effect: the first USAGE_LIMITS entry that names the
+                         user, or the default. An unset limit is unlimited.
+                limitIndex:
+                    type: integer
+                    description: |-
+                        The position of the entry in effect in the USAGE_LIMITS setting, starting
+                         at 0. The default is the last entry.
+                    format: int32
+            description: UserUsage is a user's usage and the limit set in effect for the user.
+        UserUsage_Limits:
+            type: object
+            properties:
+                memoCount:
+                    type: string
+                    description: The number of memos the user may have created.
+                memoContentBytes:
+                    type: string
+                    description: The UTF-8 size in bytes of one memo's content.
+                storageBytes:
+                    type: string
+                    description: The total size in bytes of the user's uploads.
+                uploadBytes:
+                    type: string
+                    description: The size in bytes of one uploaded file.
+            description: Limits is the limit for each metric. An unset limit is unlimited, as is 0.
         UserWebhook:
             type: object
             properties:

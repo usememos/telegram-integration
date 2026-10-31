@@ -71,9 +71,9 @@ func (c *Client) HTTPClient() *http.Client {
 }
 
 // APIPrefix returns the API base path that GetInstanceProfile selected: "/api"
-// for current Memos, or "/api/v1" for the 0.30 and 0.31 series. Both of those
-// series use /api/v1, so gate features on the instance version or on the
-// server's response instead.
+// for Memos 26.10 and later, or "/api/v1" for the 0.31 series. The prefix does
+// not identify a feature set, so gate features on the instance version or on
+// the server's response instead.
 func (c *Client) APIPrefix() string {
 	if c.legacyAPI.Load() {
 		return "/api/v1"
@@ -168,7 +168,7 @@ func (c *Client) CreateAttachment(ctx context.Context, attachment memosapi.Attac
 }
 
 // apiTransport rewrites /api/ to /api/v1/ after discovery selects the legacy
-// API used by Memos 0.30 and 0.31.
+// API used by the Memos 0.x series.
 type apiTransport struct {
 	legacyAPI *atomic.Bool
 	basePath  string

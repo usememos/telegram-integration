@@ -78,7 +78,7 @@ func TestOpenAPICompatibility(t *testing.T) {
 	// Stable series in release order, and the series that introduced features
 	// Memogram uses only when the server has them. Older series are not
 	// checked for those operations and fields.
-	series := []string{"0-30", "0-31"}
+	series := []string{"0-31", "26-10"}
 	introduced := map[string]string{
 		"SpaceService_ListSpaces":  "0-31",
 		"SpaceService_CreateSpace": "0-31",
