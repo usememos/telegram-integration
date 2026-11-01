@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 
@@ -51,10 +52,13 @@ class MockAPI(http.server.BaseHTTPRequestHandler):
         elif self.path.endswith("/getMe"):
             result = {"ok": True, "result": {"id": 123, "is_bot": True, "first_name": "Test", "username": "memogram_test"}}
         elif self.path.endswith("/getUpdates"):
+            # Hand out only updates queued before this poll arrived. A poll
+            # from a container that was stopped meanwhile must not consume the
+            # next step's update, and the pause keeps the bot from spinning.
             with self.condition:
-                self.condition.wait(timeout=0.1)
                 result = {"ok": True, "result": self.updates[:]}
                 self.updates.clear()
+            time.sleep(0.1)
         elif self.path.endswith("/setMyCommands"):
             result = {"ok": True, "result": True}
         elif self.path.endswith("/sendMessage"):
