@@ -66,23 +66,6 @@ jobs:
         env:
           MEMOS_TEST_URL: http://127.0.0.1:5230
 
-  release-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: v2.18.3
-          install-only: true
-      - run: goreleaser check
-      - run: python3 scripts/test-release.py
-
   docker:
     runs-on: ubuntu-latest
     steps:

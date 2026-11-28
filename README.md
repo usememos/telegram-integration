@@ -191,6 +191,12 @@ MEMOGRAM_VERSION=26.10.0 sh scripts/build.sh docker -t memogram:26.10.0
 ./build/memogram --version
 ```
 
-The tag-triggered workflow validates the release format, tests the code, and uses GoReleaser 2.18.3 to build release archives. GitHub releases remain drafts, with candidates marked as prereleases. Changelogs compare against the previous stable ancestor, falling back to the legacy `v0.x` history for the first CalVer release. API support remains latest plus the two most recent stable Memos series; changing Memogram's release format does not change that matrix.
+Pushing a release tag runs the [Release workflow](.github/workflows/release.yml), which follows the Memos release flow: it validates the tag, tests the code, builds one archive per platform with `sh scripts/build.sh release`, adds `checksums.txt`, and publishes the GitHub release with generated notes. Candidates are marked as prereleases, and a stable release becomes the latest. Release notes compare against the previous stable ancestor, falling back to the legacy `v0.x` history for the first CalVer release. API support remains latest plus the two most recent stable Memos series; changing Memogram's release format does not change that matrix.
 
-CI also runs `python3 scripts/test-release.py` with GoReleaser 2.18.3. It packages `26.10.0`, `26.10.0-rc.1`, and `26.01.0` in a temporary clone, checks the native archived binary's version, and skips publishing and announcements. The test creates tags only in the disposable clone.
+Archives are named `memogram_<version>_<os>_<arch>` and are built for Linux (amd64, arm64, armv7), macOS (amd64, arm64) and Windows (amd64, arm64). Windows archives are `.zip`; the others are `.tar.gz`. Running the workflow manually builds the same archives as a development version and stops before publishing, and the following builds one locally:
+
+```sh
+MEMOGRAM_VERSION=26.10.0 GOOS=linux GOARCH=arm64 sh scripts/build.sh release
+```
+
+`go test` packages a release for the native platform and checks that the archived binary reports its tag and commit.

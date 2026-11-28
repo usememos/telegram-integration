@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # Calendar tags only (26.10.0, 26.10.1, 26.10.0-rc.1); legacy v0.x tags
+      # are rejected by scripts/release_version.sh and must not start a run.
+      - "[1-9][0-9].*"
+  # A manual run builds the archives as a development version and stops
+  # before publishing.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ARTIFACT_RETENTION_DAYS: 60
+  ARTIFACT_PREFIX: memogram
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+  prepare:
+    name: Extract Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          # Previous-release detection walks tags reachable from the release commit.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Extract version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            version="$(bash scripts/release_version.sh development-version)"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          bash scripts/release_version.sh version "$REF_NAME" >> "$GITHUB_OUTPUT"
+          # Release notes span from the previous stable release, not the last
+          # release candidate. An empty value lets GitHub pick the range.
+          previous_tag="$(bash scripts/release_version.sh previous-tag . || true)"
+          echo "previous_tag=${previous_tag}" >> "$GITHUB_OUTPUT"
+
+  build-binaries:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          # Empty on a manual run, so the script derives the development
+          # version from HEAD, as the prepare job did.
+          MEMOGRAM_VERSION: ${{ needs.prepare.outputs.tag }}
+        run: |
+          sh scripts/build.sh release build
+          artifact_name="$(basename build/"${ARTIFACT_PREFIX}"_*)"
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_ENV"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: build/${{ env.artifact_name }}
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+  checksums:
+    name: Generate Checksums
+    needs: [prepare, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: ${{ env.ARTIFACT_PREFIX }}_*
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > checksums.txt
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: artifacts/checksums.txt
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, build-binaries, checksums]
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: ${{ env.ARTIFACT_PREFIX }}_*
+          merge-multiple: true
+
+      - name: Download checksum artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
+          make_latest: ${{ needs.prepare.outputs.is_prerelease != 'true' }}
+          generate_release_notes: true
+          previous_tag: ${{ needs.prepare.outputs.previous_tag }}
+          files: artifacts/*
