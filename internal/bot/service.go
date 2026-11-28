@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -58,11 +57,6 @@ type Service struct {
 	allowed   map[string]struct{}
 	albums    *mediaGroups
 
-	// spaces reports whether the Memos server supports spaces. It is set from
-	// the instance version at startup and cleared if the server reports
-	// otherwise.
-	spaces atomic.Bool
-
 	// linkBase is the web address used in memo links. Start sets it from the
 	// instance profile before polling begins, and handlers only read it.
 	linkBase string
@@ -92,7 +86,6 @@ func New(opts Options) (*Service, error) {
 	if s.downloads == nil {
 		s.downloads = &http.Client{Timeout: 60 * time.Second}
 	}
-	s.spaces.Store(true)
 	for _, username := range opts.AllowedUsernames {
 		s.allowed[strings.ToLower(username)] = struct{}{}
 	}
@@ -120,15 +113,15 @@ func New(opts Options) (*Service, error) {
 }
 
 // Start waits for Memos, then polls Telegram until ctx is canceled. Waiting
-// first selects the API base path, including when Memos starts later than
-// Memogram in a Compose deployment.
+// first reads the instance's public address, including when Memos starts later
+// than Memogram in a Compose deployment.
 func (s *Service) Start(ctx context.Context) {
 	slog.Info("Memogram started")
 	for {
 		profile, err := s.memos.GetInstanceProfile(ctx)
 		if err == nil {
 			s.useInstanceProfile(profile)
-			slog.Info("connected to Memos", slog.String("version", profile.Version), slog.String("api", s.memos.APIPrefix()), slog.Bool("spaces", s.spaces.Load()))
+			slog.Info("connected to Memos", slog.String("version", profile.Version))
 			break
 		}
 		slog.Warn("waiting for Memos instance profile", slog.Any("err", err))
@@ -142,9 +135,7 @@ func (s *Service) Start(ctx context.Context) {
 	commands := []models.BotCommand{
 		{Command: commandStart, Description: "Start the bot with access token"},
 		{Command: commandSearch, Description: "Search for the memos"},
-	}
-	if s.spaces.Load() {
-		commands = append(commands, models.BotCommand{Command: commandSpace, Description: "Choose the default space for new memos"})
+		{Command: commandSpace, Description: "Choose the default space for new memos"},
 	}
 	if _, err := s.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
 		slog.Error("failed to set bot commands", slog.Any("err", redactTelegramError(err)))
@@ -152,11 +143,9 @@ func (s *Service) Start(ctx context.Context) {
 	s.bot.Start(ctx)
 }
 
-// useInstanceProfile enables spaces when the server version has them, and
-// links memos to the instance's public address when the administrator has
-// configured one.
+// useInstanceProfile links memos to the instance's public address when the
+// administrator has configured one.
 func (s *Service) useInstanceProfile(profile *memosapi.InstanceProfile) {
-	s.spaces.Store(memos.SupportsSpaces(profile.Version))
 	if profile.InstanceUrl == "" {
 		return
 	}

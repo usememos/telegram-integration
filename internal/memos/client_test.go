@@ -9,13 +9,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/usememos/memogram/internal/memosapi"
 )
 
 func TestMemosClientAPINamespace(t *testing.T) {
-	for _, namespace := range []string{"api", "api/v1", "notes/api", "notes/api/v1"} {
+	for _, namespace := range []string{"api", "notes/api"} {
 		t.Run(namespace, func(t *testing.T) {
 			var paths []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,18 +61,10 @@ func TestMemosClientAPINamespace(t *testing.T) {
 				baseURL += "/notes"
 			}
 			client := NewClient(baseURL)
-			// An authenticated client created before discovery must share the selection.
 			auth := client.WithAccessToken("test-token")
 			profile, err := client.GetInstanceProfile(context.Background())
 			if err != nil || profile.InstanceUrl != "https://memos.example.com" {
 				t.Fatalf("get profile: %v, %v", profile, err)
-			}
-			wantPrefix := "/api"
-			if strings.HasSuffix(namespace, "/v1") {
-				wantPrefix = "/api/v1"
-			}
-			if auth.APIPrefix() != wantPrefix {
-				t.Fatalf("APIPrefix() = %q, want %q", auth.APIPrefix(), wantPrefix)
 			}
 			user, err := auth.GetCurrentUser(context.Background())
 			if err != nil || user.DisplayName != "Alice" {
@@ -89,90 +80,10 @@ func TestMemosClientAPINamespace(t *testing.T) {
 			if _, err := auth.CreateAttachment(context.Background(), memosapi.Attachment{Filename: "test.txt", Type: "text/plain", Content: "dGVzdA==", Memo: memo.Name}); err != nil {
 				t.Fatalf("upload attachment: %v", err)
 			}
-			wantCalls := 5
-			if strings.HasSuffix(namespace, "/v1") {
-				wantCalls = 6
-			}
-			if len(paths) != wantCalls || paths[len(paths)-1] != "/"+namespace+"/attachments" {
-				t.Fatalf("unexpected API discovery: %v", paths)
+			if len(paths) != 5 || paths[len(paths)-1] != "/"+namespace+"/attachments" {
+				t.Fatalf("unexpected requests: %v", paths)
 			}
 		})
-	}
-}
-
-func TestMemosClientProfileFallback(t *testing.T) {
-	for _, status := range []int{404, 501, 401, 403, 500, 502} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			var paths []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				paths = append(paths, r.URL.Path)
-				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/api/v1/instance/profile" {
-					fmt.Fprint(w, `{"version":"legacy"}`)
-					return
-				}
-				w.WriteHeader(status)
-				fmt.Fprint(w, `{"message":"profile failed"}`)
-			}))
-			defer server.Close()
-			client := NewClient(server.URL)
-			profile, err := client.GetInstanceProfile(context.Background())
-			if status == 404 || status == 501 {
-				if err != nil || profile.Version != "legacy" || len(paths) != 2 || paths[0] != "/api/instance/profile" || paths[1] != "/api/v1/instance/profile" {
-					t.Fatalf("fallback failed: paths=%v err=%v", paths, err)
-				}
-			} else {
-				var apiErr *APIError
-				if !errors.As(err, &apiErr) || apiErr.StatusCode != status || len(paths) != 1 {
-					t.Fatalf("error unexpectedly retried: paths=%v err=%v", paths, err)
-				}
-			}
-		})
-	}
-}
-
-func TestMemosClientFailedFallbackResetsNamespace(t *testing.T) {
-	var paths []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch len(paths) {
-		case 1:
-			w.WriteHeader(http.StatusNotFound)
-		case 2:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		default:
-			fmt.Fprint(w, `{"version":"recovered"}`)
-		}
-	}))
-	defer server.Close()
-	client := NewClient(server.URL)
-	if _, err := client.GetInstanceProfile(context.Background()); err == nil {
-		t.Fatal("expected fallback failure")
-	}
-	profile, err := client.GetInstanceProfile(context.Background())
-	if err != nil || profile.Version != "recovered" || strings.Join(paths, ",") != "/api/instance/profile,/api/v1/instance/profile,/api/instance/profile" {
-		t.Fatalf("namespace did not recover: paths=%v err=%v", paths, err)
-	}
-}
-
-func TestMemosClientTimeoutDoesNotFallback(t *testing.T) {
-	var paths []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		<-r.Context().Done()
-	}))
-	defer server.Close()
-	client := NewClient(server.URL)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if _, err := client.GetInstanceProfile(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected timeout, got %v", err)
-	}
-	// Closing waits for the handler, so reading its request log is race-free.
-	server.Close()
-	if len(paths) != 1 || paths[0] != "/api/instance/profile" {
-		t.Fatalf("timeout triggered namespace discovery: %v", paths)
 	}
 }
 
@@ -262,18 +173,6 @@ func TestCreateMemoDefaultsToPrivate(t *testing.T) {
 	}
 }
 
-func TestSupportsSpaces(t *testing.T) {
-	for version, want := range map[string]bool{
-		"0.30.0": false, "0.30.2": false, "v0.29.1": false,
-		"0.31.0": true, "0.31.0-rc.1": true, "0.32.0": true, "1.0.0": true,
-		"26.10.18-dev.0b53427": true, "container-smoke": true, "": true,
-	} {
-		if got := SupportsSpaces(version); got != want {
-			t.Errorf("SupportsSpaces(%q) = %v, want %v", version, got, want)
-		}
-	}
-}
-
 func TestListSpacesFollowsPages(t *testing.T) {
 	var tokens []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -296,21 +195,6 @@ func TestListSpacesFollowsPages(t *testing.T) {
 	}
 	if strings.Join(tokens, ",") != ",page-2" {
 		t.Fatalf("unexpected page tokens %q", tokens)
-	}
-}
-
-func TestListSpacesReportsUnsupportedServer(t *testing.T) {
-	for status, wantUnsupported := range map[int]bool{404: true, 501: true, 500: false, 401: false} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(status)
-			}))
-			defer server.Close()
-			_, err := NewClient(server.URL).ListSpaces(context.Background())
-			if errors.Is(err, ErrSpacesUnsupported) != wantUnsupported || err == nil {
-				t.Fatalf("got %v", err)
-			}
-		})
 	}
 }
 

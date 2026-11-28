@@ -88,7 +88,6 @@ func (e MemoVisibility) Valid() bool {
 
 // Defines values for MemoRelationType.
 const (
-	COMMENT         MemoRelationType = "COMMENT"
 	REFERENCE       MemoRelationType = "REFERENCE"
 	TYPEUNSPECIFIED MemoRelationType = "TYPE_UNSPECIFIED"
 )
@@ -96,8 +95,6 @@ const (
 // Valid indicates whether the value is a known member of the MemoRelationType enum.
 func (e MemoRelationType) Valid() bool {
 	switch e {
-	case COMMENT:
-		return true
 	case REFERENCE:
 		return true
 	case TYPEUNSPECIFIED:
@@ -324,6 +321,10 @@ type InstanceProfile struct {
 	//  determine whether initial setup is required.
 	Admin User `json:"admin,omitempty,omitzero"`
 
+	// AiFeatures The AI features that are ready to use, derived from the AI setting.
+	//  Only set for signed-in callers.
+	AiFeatures InstanceProfileAIFeatures `json:"aiFeatures,omitempty,omitzero"`
+
 	// Challenge The proof-of-humanity challenge required on signup and password sign-in.
 	//  Absent when none is configured, which is the case on every self-hosted instance.
 	Challenge InstanceProfileChallenge `json:"challenge,omitempty,omitzero"`
@@ -348,6 +349,15 @@ type InstanceProfile struct {
 
 // InstanceProfileAccessMode Whether unauthenticated users may access instance content.
 type InstanceProfileAccessMode string
+
+// InstanceProfileAIFeatures AIFeatures says which AI features the instance can serve.
+type InstanceProfileAIFeatures struct {
+	// TagSuggestions Whether AIService.SuggestTags is available.
+	TagSuggestions bool `json:"tagSuggestions,omitempty,omitzero"`
+
+	// Transcription Whether AIService.Transcribe is available.
+	Transcription bool `json:"transcription,omitempty,omitzero"`
+}
 
 // InstanceProfileChallenge Challenge describes a proof-of-humanity challenge widget.
 type InstanceProfileChallenge struct {
@@ -440,6 +450,10 @@ type Memo struct {
 	// Attachments Optional. The attachments of the memo. Setting it replaces the full set.
 	Attachments []Attachment `json:"attachments,omitempty,omitzero"`
 
+	// CommentCount Output only. The number of comments directly on this memo that the caller
+	//  can read.
+	CommentCount int32 `json:"commentCount,omitempty,omitzero"`
+
 	// Content Required. The content of the memo in Markdown. Must not exceed the
 	//  instance's content length limit.
 	Content string `json:"content"`
@@ -460,9 +474,9 @@ type Memo struct {
 	//  Format: memos/{memo}
 	Name string `json:"name,omitempty,omitzero"`
 
-	// Parent Output only. The context memo of this COMMENT relation, if any.
-	//  Its identity is returned even when the caller cannot read the parent.
-	//  Fetch the parent independently; this field does not grant read access.
+	// Parent Optional. Immutable. The memo this memo comments on. Set it on creation
+	//  to create a comment; unset for a top-level memo. Its identity is returned
+	//  even when the caller cannot read the parent, and grants no read access.
 	//  Format: memos/{memo}
 	Parent string `json:"parent,omitempty,omitzero"`
 
@@ -476,8 +490,7 @@ type Memo struct {
 	// Reactions Output only. The reactions to the memo.
 	Reactions []Reaction `json:"reactions,omitempty,omitzero"`
 
-	// Relations Optional. The relations of the memo in both directions. Only REFERENCE
-	//  relations can be set; COMMENT relations are output only.
+	// Relations Optional. The relations of the memo in both directions.
 	Relations []MemoRelation `json:"relations,omitempty,omitzero"`
 
 	// Snippet Output only. A plain-text snippet of the content.
@@ -516,11 +529,10 @@ type MemoVisibility string
 
 // MemoRelation MemoRelation is a directed link from one memo to another.
 type MemoRelation struct {
-	// Memo Required. The source memo of the relation. For COMMENT, the comment.
+	// Memo Required. The source memo of the relation.
 	Memo MemoRelationMemoRef `json:"memo"`
 
-	// RelatedMemo Required. The target memo of the relation. For COMMENT, the memo being
-	//  commented on.
+	// RelatedMemo Required. The target memo of the relation.
 	RelatedMemo MemoRelationMemoRef `json:"relatedMemo"`
 
 	// Type Required. The type of the relation.
@@ -537,7 +549,7 @@ type MemoRelationMemoRef struct {
 	Name string `json:"name"`
 
 	// Snippet Output only. A plain-text snippet of the memo content. Empty in
-	//  ListMemos and ListMemoComments responses.
+	//  ListMemos responses.
 	Snippet string `json:"snippet,omitempty,omitzero"`
 }
 
@@ -696,6 +708,7 @@ type SignInRequestSsoCredentials struct {
 	IdentityProvider string `json:"identityProvider"`
 
 	// RedirectUri Required. The redirect URI used in the authorization request.
+	//  When the instance URL is configured, it must be that URL's `/auth/callback`.
 	RedirectUri string `json:"redirectUri"`
 }
 
@@ -836,11 +849,15 @@ type MemoServiceListMemosParams struct {
 
 	// Filter Optional. A CEL expression to filter memos. Combine terms with && and ||.
 	//  Available fields:
+	//    name (string resource name; match several with
+	//      `name in ["memos/abc", "memos/def"]`),
 	//    content (string), creator (string, e.g. "users/1"),
 	//    created_ts / updated_ts (timestamp), pinned (bool),
 	//    visibility (string: PRIVATE | PROTECTED | PUBLIC | SPACE),
 	//    space (string resource name, or null when the memo has no space;
 	//      supports == and comparisons against null, e.g. space != null),
+	//    parent (string resource name of the memo this one comments on, or null
+	//      for a top-level memo; supports == and comparisons against null),
 	//    tags (list<string>; match with `"work" in tags`, not `tag == "work"`),
 	//    has_task_list / has_link / has_code / has_incomplete_tasks (bool),
 	//    has_location (bool; true when the memo has a location attached),
@@ -852,6 +869,8 @@ type MemoServiceListMemosParams struct {
 	//  Examples:
 	//    pinned == true && visibility == "PUBLIC"
 	//    space == "spaces/team" or space == null
+	//    parent == null (top-level memos only)
+	//    parent == "memos/abc" (the comments on one memo)
 	//    tags.exists(t, t == "urgent")
 	//    content.contains("roadmap") && created_ts > now - duration("168h")
 	Filter string `form:"filter,omitempty" json:"filter,omitempty,omitzero"`
@@ -1137,8 +1156,9 @@ type ClientInterface interface {
 
 	// MemoServiceListMemos performs a GET /api/memos (the `MemoServiceListMemos` operationId) request.
 	//
-	// ListMemos lists the memos the caller can read, excluding comments.
-	//  Anonymous callers can list only when the instance allows public access.
+	// ListMemos lists the memos the caller can read, comments included. Narrow
+	//  to top-level memos with the filter `parent == null`. Anonymous callers can
+	//  list only when the instance allows public access.
 	MemoServiceListMemos(ctx context.Context, params *MemoServiceListMemosParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MemoServiceCreateMemoWithBody performs a POST /api/memos (the `MemoServiceCreateMemo` operationId) request,
@@ -1146,7 +1166,8 @@ type ClientInterface interface {
 	//
 	// CreateMemo creates a memo owned by the authenticated user. The request body
 	//  is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-	//  Requires authentication.
+	//  Set memo.parent to create a comment on that memo, which must be readable by
+	//  the caller and not archived. Requires authentication.
 	MemoServiceCreateMemoWithBody(ctx context.Context, params *MemoServiceCreateMemoParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MemoServiceCreateMemo performs a POST /api/memos (the `MemoServiceCreateMemo` operationId) request.
@@ -1154,7 +1175,8 @@ type ClientInterface interface {
 	//
 	// CreateMemo creates a memo owned by the authenticated user. The request body
 	//  is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-	//  Requires authentication.
+	//  Set memo.parent to create a comment on that memo, which must be readable by
+	//  the caller and not archived. Requires authentication.
 	MemoServiceCreateMemo(ctx context.Context, params *MemoServiceCreateMemoParams, body MemoServiceCreateMemoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MemoServiceGetMemo performs a GET /api/memos/{memo} (the `MemoServiceGetMemo` operationId) request.
@@ -1339,9 +1361,10 @@ func (c *Client) InstanceServiceGetInstanceProfile(ctx context.Context, reqEdito
 
 // MemoServiceListMemos performs a GET /api/memos (the `MemoServiceListMemos` operationId) request.
 //
-// ListMemos lists the memos the caller can read, excluding comments.
+// ListMemos lists the memos the caller can read, comments included. Narrow
 //
-//	Anonymous callers can list only when the instance allows public access.
+//	to top-level memos with the filter `parent == null`. Anonymous callers can
+//	list only when the instance allows public access.
 func (c *Client) MemoServiceListMemos(ctx context.Context, params *MemoServiceListMemosParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMemoServiceListMemosRequest(c.Server, params)
 	if err != nil {
@@ -1360,7 +1383,8 @@ func (c *Client) MemoServiceListMemos(ctx context.Context, params *MemoServiceLi
 // CreateMemo creates a memo owned by the authenticated user. The request body
 //
 //	is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-//	Requires authentication.
+//	Set memo.parent to create a comment on that memo, which must be readable by
+//	the caller and not archived. Requires authentication.
 func (c *Client) MemoServiceCreateMemoWithBody(ctx context.Context, params *MemoServiceCreateMemoParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMemoServiceCreateMemoRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -1379,7 +1403,8 @@ func (c *Client) MemoServiceCreateMemoWithBody(ctx context.Context, params *Memo
 // CreateMemo creates a memo owned by the authenticated user. The request body
 //
 //	is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-//	Requires authentication.
+//	Set memo.parent to create a comment on that memo, which must be readable by
+//	the caller and not archived. Requires authentication.
 func (c *Client) MemoServiceCreateMemo(ctx context.Context, params *MemoServiceCreateMemoParams, body MemoServiceCreateMemoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMemoServiceCreateMemoRequest(c.Server, params, body)
 	if err != nil {
@@ -2407,8 +2432,9 @@ type ClientWithResponsesInterface interface {
 
 	// MemoServiceListMemosWithResponse performs a GET /api/memos (the `MemoServiceListMemos` operationId) request.
 	//
-	// ListMemos lists the memos the caller can read, excluding comments.
-	//  Anonymous callers can list only when the instance allows public access.
+	// ListMemos lists the memos the caller can read, comments included. Narrow
+	//  to top-level memos with the filter `parent == null`. Anonymous callers can
+	//  list only when the instance allows public access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	MemoServiceListMemosWithResponse(ctx context.Context, params *MemoServiceListMemosParams, reqEditors ...RequestEditorFn) (*MemoServiceListMemosResponse, error)
@@ -2418,7 +2444,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// CreateMemo creates a memo owned by the authenticated user. The request body
 	//  is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-	//  Requires authentication.
+	//  Set memo.parent to create a comment on that memo, which must be readable by
+	//  the caller and not archived. Requires authentication.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	MemoServiceCreateMemoWithBodyWithResponse(ctx context.Context, params *MemoServiceCreateMemoParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MemoServiceCreateMemoResponse, error)
@@ -2428,7 +2455,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// CreateMemo creates a memo owned by the authenticated user. The request body
 	//  is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-	//  Requires authentication.
+	//  Set memo.parent to create a comment on that memo, which must be readable by
+	//  the caller and not archived. Requires authentication.
 	MemoServiceCreateMemoWithResponse(ctx context.Context, params *MemoServiceCreateMemoParams, body MemoServiceCreateMemoJSONRequestBody, reqEditors ...RequestEditorFn) (*MemoServiceCreateMemoResponse, error)
 
 	// MemoServiceGetMemoWithResponse performs a GET /api/memos/{memo} (the `MemoServiceGetMemo` operationId) request.
@@ -3235,9 +3263,10 @@ func (c *ClientWithResponses) InstanceServiceGetInstanceProfileWithResponse(ctx 
 
 // MemoServiceListMemosWithResponse performs a GET /api/memos (the `MemoServiceListMemos` operationId) request.
 //
-// ListMemos lists the memos the caller can read, excluding comments.
+// ListMemos lists the memos the caller can read, comments included. Narrow
 //
-//	Anonymous callers can list only when the instance allows public access.
+//	to top-level memos with the filter `parent == null`. Anonymous callers can
+//	list only when the instance allows public access.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) MemoServiceListMemosWithResponse(ctx context.Context, params *MemoServiceListMemosParams, reqEditors ...RequestEditorFn) (*MemoServiceListMemosResponse, error) {
@@ -3254,7 +3283,8 @@ func (c *ClientWithResponses) MemoServiceListMemosWithResponse(ctx context.Conte
 // CreateMemo creates a memo owned by the authenticated user. The request body
 //
 //	is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-//	Requires authentication.
+//	Set memo.parent to create a comment on that memo, which must be readable by
+//	the caller and not archived. Requires authentication.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) MemoServiceCreateMemoWithBodyWithResponse(ctx context.Context, params *MemoServiceCreateMemoParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MemoServiceCreateMemoResponse, error) {
@@ -3271,7 +3301,8 @@ func (c *ClientWithResponses) MemoServiceCreateMemoWithBodyWithResponse(ctx cont
 // CreateMemo creates a memo owned by the authenticated user. The request body
 //
 //	is a Memo; set its Markdown content and visibility (defaults to PRIVATE).
-//	Requires authentication.
+//	Set memo.parent to create a comment on that memo, which must be readable by
+//	the caller and not archived. Requires authentication.
 func (c *ClientWithResponses) MemoServiceCreateMemoWithResponse(ctx context.Context, params *MemoServiceCreateMemoParams, body MemoServiceCreateMemoJSONRequestBody, reqEditors ...RequestEditorFn) (*MemoServiceCreateMemoResponse, error) {
 	rsp, err := c.MemoServiceCreateMemo(ctx, params, body, reqEditors...)
 	if err != nil {

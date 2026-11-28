@@ -40,11 +40,6 @@ func TestKeyboardKeepsLegacyCallbackFormat(t *testing.T) {
 	if want := "Public=public memos/abc,Private=private memos/abc,Pin=pin memos/abc|Space=space memos/abc"; keyboardLayout(keyboard) != want {
 		t.Fatalf("got %s", keyboardLayout(keyboard))
 	}
-	// Servers without spaces get no Space button.
-	s.spaces.Store(false)
-	if want := "Public=public memos/abc,Private=private memos/abc,Pin=pin memos/abc"; keyboardLayout(s.memoKeyboard(&memosapi.Memo{Name: "memos/abc"})) != want {
-		t.Fatalf("got %s", keyboardLayout(s.memoKeyboard(&memosapi.Memo{Name: "memos/abc"})))
-	}
 }
 
 func TestCallback(t *testing.T) {

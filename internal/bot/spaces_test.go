@@ -249,51 +249,6 @@ func TestBackRestoresKeyboard(t *testing.T) {
 	}
 }
 
-func TestServerWithoutSpaces(t *testing.T) {
-	t.Run("detected at runtime", func(t *testing.T) {
-		fake := &spaceMemos{}
-		s, tg, _ := newSpaceService(t, fake)
-		calls := press(s, tg, "space memos/abc")
-		if methods(calls) != "answerCallbackQuery" || calls[0].text != spacesUnsupported {
-			t.Fatalf("unexpected calls: %+v", calls)
-		}
-		if s.spaces.Load() {
-			t.Fatal("unsupported server was not remembered")
-		}
-		// Later presses fail fast, and new keyboards drop the Space button.
-		press(s, tg, "space memos/abc")
-		if fake.spaceLists != 1 || strings.Contains(keyboardLayout(s.memoKeyboard(&fake.memo)), "Space") {
-			t.Fatalf("spaces still offered: lists=%d", fake.spaceLists)
-		}
-	})
-
-	t.Run("from the instance version", func(t *testing.T) {
-		fake := &spaceMemos{spaces: teamSpaces}
-		s, tg, data := newSpaceService(t, fake)
-		if err := data.SetDefaultSpace(1, store.Space{Name: "spaces/team", Title: "Team"}); err != nil {
-			t.Fatal(err)
-		}
-		s.useInstanceProfile(&memosapi.InstanceProfile{Version: "0.30.0"})
-		for data, method := range map[string]string{"space memos/abc": "answerCallbackQuery", "sp memos/abc -": "answerCallbackQuery", "sd -": "answerCallbackQuery"} {
-			if calls := press(s, tg, data); methods(calls) != method || calls[0].text != spacesUnsupported {
-				t.Fatalf("%s: unexpected calls %+v", data, calls)
-			}
-		}
-		if calls := send(s, tg, textMessage(1, "/space")); len(calls) != 1 || calls[0].text != spacesUnsupported {
-			t.Fatalf("/space: unexpected calls %+v", calls)
-		}
-		// A saved default is ignored rather than sent to a server that would
-		// reject it.
-		calls := send(s, tg, textMessage(1, "note"))
-		if len(fake.created) != 1 || fake.created[0].Space != "" || !strings.Contains(calls[0].text, "Content saved as PRIVATE") {
-			t.Fatalf("created %+v, replies %+v", fake.created, calls)
-		}
-		if strings.Contains(keyboardLayout(&calls[0].keyboard), "Space") || fake.spaceLists != 0 {
-			t.Fatalf("spaces offered on 0.30: %s", keyboardLayout(&calls[0].keyboard))
-		}
-	})
-}
-
 func TestSpaceCommand(t *testing.T) {
 	t.Run("lists spaces", func(t *testing.T) {
 		s, tg, _ := newSpaceService(t, &spaceMemos{spaces: teamSpaces})

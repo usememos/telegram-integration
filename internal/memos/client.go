@@ -1,6 +1,5 @@
 // Package memos is a client for the Memos REST API. It wraps the client
-// generated in internal/memosapi and selects the API base path at runtime, so
-// one build supports every Memos version in the compatibility matrix.
+// generated in internal/memosapi.
 package memos
 
 import (
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/usememos/memogram/internal/memosapi"
@@ -19,39 +17,31 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
-	legacyAPI  *atomic.Bool // shared by every client derived from the same NewClient
 	api        *memosapi.Client
 }
 
 // NewClient returns an unauthenticated client for the Memos instance at
-// baseURL. Call GetInstanceProfile at startup to select /api or /api/v1
-// before writing.
+// baseURL.
 func NewClient(baseURL string) *Client {
-	legacyAPI := &atomic.Bool{}
-	u, _ := url.Parse(baseURL)
-	httpClient := &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: &apiTransport{legacyAPI: legacyAPI, basePath: strings.TrimRight(u.Path, "/"), transport: http.DefaultTransport},
-	}
-	return newClient(baseURL, httpClient, legacyAPI)
+	return newClient(baseURL, &http.Client{Timeout: 60 * time.Second, Transport: http.DefaultTransport})
 }
 
-func newClient(baseURL string, httpClient *http.Client, legacyAPI *atomic.Bool) *Client {
+func newClient(baseURL string, httpClient *http.Client) *Client {
 	api, err := memosapi.NewClient(baseURL, memosapi.WithHTTPClient(httpClient))
 	if err != nil {
 		panic(err) // Configuration validates the base URL before construction.
 	}
-	return &Client{baseURL: baseURL, httpClient: httpClient, legacyAPI: legacyAPI, api: api}
+	return &Client{baseURL: baseURL, httpClient: httpClient, api: api}
 }
 
 // WithAccessToken returns a client that authenticates with a Personal Access
-// Token. It shares the API base path selection with c.
+// Token.
 func (c *Client) WithAccessToken(accessToken string) *Client {
 	httpClient := &http.Client{
 		Timeout:   c.httpClient.Timeout,
 		Transport: &authTransport{token: accessToken, transport: c.httpClient.Transport},
 	}
-	return newClient(c.baseURL, httpClient, c.legacyAPI)
+	return newClient(c.baseURL, httpClient)
 }
 
 // BaseURL returns the server address the client was created with.
@@ -65,34 +55,15 @@ func (c *Client) API() *memosapi.Client {
 }
 
 // HTTPClient returns the HTTP client used for API requests, including
-// authentication and base path selection.
+// authentication.
 func (c *Client) HTTPClient() *http.Client {
 	return c.httpClient
 }
 
-// APIPrefix returns the API base path that GetInstanceProfile selected: "/api"
-// for Memos 26.10 and later, or "/api/v1" for the 0.31 series. The prefix does
-// not identify a feature set, so gate features on the instance version or on
-// the server's response instead.
-func (c *Client) APIPrefix() string {
-	if c.legacyAPI.Load() {
-		return "/api/v1"
-	}
-	return "/api"
-}
-
-// GetInstanceProfile discovers the API base path using a read-only request.
-// Writes are never retried as part of version discovery.
+// GetInstanceProfile returns the instance's version and public address. It
+// needs no authentication.
 func (c *Client) GetInstanceProfile(ctx context.Context) (*memosapi.InstanceProfile, error) {
-	profile, err := DecodeResponse[memosapi.InstanceProfile](c.api.InstanceServiceGetInstanceProfile(ctx))
-	if !c.legacyAPI.Load() && isMissingEndpoint(err) {
-		c.legacyAPI.Store(true)
-		profile, err = DecodeResponse[memosapi.InstanceProfile](c.api.InstanceServiceGetInstanceProfile(ctx))
-		if err != nil {
-			c.legacyAPI.Store(false)
-		}
-	}
-	return profile, err
+	return DecodeResponse[memosapi.InstanceProfile](c.api.InstanceServiceGetInstanceProfile(ctx))
 }
 
 func (c *Client) GetCurrentUser(ctx context.Context) (*memosapi.User, error) {
@@ -111,7 +82,7 @@ const (
 	FieldContent    = "content"
 	FieldVisibility = "visibility"
 	FieldPinned     = "pinned"
-	FieldSpace      = "space" // Memos 0.31 and later
+	FieldSpace      = "space"
 )
 
 // CreateMemo creates a memo owned by the authenticated user. Visibility
@@ -165,26 +136,6 @@ func (c *Client) ListMemos(ctx context.Context, filter string) ([]memosapi.Memo,
 
 func (c *Client) CreateAttachment(ctx context.Context, attachment memosapi.Attachment) (*memosapi.Attachment, error) {
 	return DecodeResponse[memosapi.Attachment](c.api.AttachmentServiceCreateAttachment(ctx, nil, attachment))
-}
-
-// apiTransport rewrites /api/ to /api/v1/ after discovery selects the legacy
-// API used by the Memos 0.x series.
-type apiTransport struct {
-	legacyAPI *atomic.Bool
-	basePath  string
-	transport http.RoundTripper
-}
-
-func (t *apiTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	if t.legacyAPI.Load() {
-		prefix := t.basePath + "/api/"
-		req.URL.Path = strings.Replace(req.URL.Path, prefix, t.basePath+"/api/v1/", 1)
-		if req.URL.RawPath != "" {
-			req.URL.RawPath = strings.Replace(req.URL.RawPath, prefix, t.basePath+"/api/v1/", 1)
-		}
-	}
-	return t.transport.RoundTrip(req)
 }
 
 type authTransport struct {

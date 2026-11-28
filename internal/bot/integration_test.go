@@ -514,17 +514,6 @@ func TestMemosIntegration(t *testing.T) {
 	}
 
 	t.Run("spaces", func(t *testing.T) {
-		if !memos.SupportsSpaces(profile.Version) {
-			reply := send(t, message(alice, "integration without spaces"), "Content saved as PRIVATE")
-			if strings.Contains(keyboardLayout(&reply.keyboard), "Space") {
-				t.Fatalf("Space button offered: %s", keyboardLayout(&reply.keyboard))
-			}
-			send(t, message(alice, "/space"), spacesUnsupported)
-			memo := savedMemo(t, alice, reply)
-			requireCalls(t, pressButton(t, alice, "space "+memo.Name), "answerCallbackQuery", spacesUnsupported)
-			return
-		}
-
 		space, err := memos.DecodeResponse[memosapi.Space](alice.auth.API().SpaceServiceCreateSpace(ctx, &memosapi.SpaceServiceCreateSpaceParams{SpaceId: "integration-team"}, memosapi.Space{Title: "Integration_Team"}))
 		if err != nil {
 			t.Fatalf("create space: %v", err)

@@ -3,8 +3,6 @@ package memos
 import (
 	"os"
 	"reflect"
-	"slices"
-	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
@@ -67,7 +65,7 @@ func TestOpenAPICompatibility(t *testing.T) {
 				if op.ID == "" {
 					continue
 				}
-				result[op.ID] = contract{method, strings.Replace(path, "/api/v1/", "/api/", 1),
+				result[op.ID] = contract{method, path,
 					op.RequestBody.Content["application/json"].Schema.Ref,
 					op.Responses["200"].Content["application/json"].Schema.Ref}
 			}
@@ -75,22 +73,9 @@ func TestOpenAPICompatibility(t *testing.T) {
 		return result
 	}
 	latestContracts := contracts(latest)
-	// Stable series in release order, and the series that introduced features
-	// Memogram uses only when the server has them. Older series are not
-	// checked for those operations and fields.
-	series := []string{"0-31", "26-10"}
-	introduced := map[string]string{
-		"SpaceService_ListSpaces":  "0-31",
-		"SpaceService_CreateSpace": "0-31",
-		"Memo.space":               "0-31",
-		"Space":                    "0-31",
-		"ListSpacesResponse":       "0-31",
-	}
-	has := func(version, item string) bool {
-		since, ok := introduced[item]
-		return !ok || slices.Index(series, version) >= slices.Index(series, since)
-	}
-	for _, version := range series {
+	// Supported stable series. Every operation and field Memogram uses exists
+	// in all of them.
+	for _, version := range []string{"26-10", "26-11"} {
 		t.Run(version, func(t *testing.T) {
 			var stable openAPISnapshot
 			readYAML("../../openapi/"+version+".yaml", &stable)
@@ -99,9 +84,6 @@ func TestOpenAPICompatibility(t *testing.T) {
 				want, ok := latestContracts[id]
 				if !ok {
 					t.Fatalf("generated operation %s missing from latest", id)
-				}
-				if !has(version, id) {
-					continue
 				}
 				if got := stableContracts[id]; got != want {
 					t.Errorf("incompatible operation %s: stable=%+v latest=%+v", id, got, want)
@@ -116,9 +98,6 @@ func TestOpenAPICompatibility(t *testing.T) {
 				"ListSpacesResponse": {"spaces", "nextPageToken"},
 			} {
 				for _, field := range fields {
-					if !has(version, model) || !has(version, model+"."+field) {
-						continue
-					}
 					got, exists := stable.Components.Schemas[model].Properties[field]
 					want := latest.Components.Schemas[model].Properties[field]
 					if !exists || !reflect.DeepEqual(got, want) {

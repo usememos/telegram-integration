@@ -39,10 +39,6 @@ func (a memoAction) valid() bool {
 	}
 }
 
-func (a memoAction) needsSpaces() bool {
-	return a == actionSpace || a == actionPlace || a == actionDefault
-}
-
 // apply changes memo as a visibility or pin action describes and returns the
 // changed field.
 func (a memoAction) apply(memo *memosapi.Memo) string {
@@ -111,15 +107,10 @@ func (s *Service) memoKeyboard(memo *memosapi.Memo) *models.InlineKeyboardMarkup
 	button := func(text string, action memoAction) models.InlineKeyboardButton {
 		return dataButton(text, callbackData{action: action, memo: memo.Name})
 	}
-	rows := [][]models.InlineKeyboardButton{{
-		button("Public", actionPublic),
-		button("Private", actionPrivate),
-		button("Pin", actionPin),
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{button("Public", actionPublic), button("Private", actionPrivate), button("Pin", actionPin)},
+		{button("Space", actionSpace)},
 	}}
-	if s.spaces.Load() {
-		rows = append(rows, []models.InlineKeyboardButton{button("Space", actionSpace)})
-	}
-	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 // handleCallback handles a button press. Memo buttons update the memo, then
@@ -138,10 +129,6 @@ func (s *Service) handleCallback(ctx context.Context, _ *bot.Bot, update *models
 	}
 	if !data.action.valid() {
 		s.alert(ctx, query.ID, "Unknown action")
-		return
-	}
-	if data.action.needsSpaces() && !s.spaces.Load() {
-		s.alert(ctx, query.ID, spacesUnsupported)
 		return
 	}
 
@@ -204,7 +191,7 @@ func (s *Service) confirmUpdate(ctx context.Context, query *models.CallbackQuery
 
 // openSpacePicker replaces a memo's buttons with the user's spaces.
 func (s *Service) openSpacePicker(ctx context.Context, query *models.CallbackQuery, client *memos.Client, memo *memosapi.Memo) {
-	spaces, err := s.listSpaces(ctx, client)
+	spaces, err := client.ListSpaces(ctx)
 	if err != nil {
 		s.alertSpacesError(ctx, query.ID, err)
 		return
@@ -237,7 +224,7 @@ func (s *Service) placeMemo(ctx context.Context, query *models.CallbackQuery, cl
 			memo.Visibility = memosapi.PRIVATE
 		}
 	} else {
-		spaces, err := s.listSpaces(ctx, client)
+		spaces, err := client.ListSpaces(ctx)
 		if err != nil {
 			s.alertSpacesError(ctx, query.ID, err)
 			return

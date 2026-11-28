@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -19,8 +18,7 @@ import (
 )
 
 const (
-	spacesUnsupported = "Your Memos version does not support spaces (0.31 or later is required)"
-	noSpaces          = "You are not a member of any space."
+	noSpaces = "You are not a member of any space."
 
 	// noSpaceKey is the space key of the "No space" choice.
 	noSpaceKey = "-"
@@ -73,26 +71,12 @@ func spacePicker(spaces []memosapi.Space, current string, data func(key string) 
 	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
-// listSpaces lists the user's spaces and remembers when the server turns out
-// not to support them, so their buttons stop being offered.
-func (s *Service) listSpaces(ctx context.Context, client *memos.Client) ([]memosapi.Space, error) {
-	spaces, err := client.ListSpaces(ctx)
-	if errors.Is(err, memos.ErrSpacesUnsupported) {
-		s.spaces.Store(false)
-	}
-	return spaces, err
-}
-
 func (s *Service) alertSpacesError(ctx context.Context, queryID string, err error) {
 	s.alert(ctx, queryID, spacesErrorText(err))
 }
 
-// spacesErrorText returns the reply for a failure to list spaces, logging
-// failures other than an unsupported server.
+// spacesErrorText logs a failure to list spaces and returns the reply for it.
 func spacesErrorText(err error) string {
-	if errors.Is(err, memos.ErrSpacesUnsupported) {
-		return spacesUnsupported
-	}
 	slog.Error("failed to list spaces", slog.Any("err", err))
 	return "Failed to list spaces"
 }
@@ -116,11 +100,7 @@ func (s *Service) handleSpace(ctx context.Context, _ *bot.Bot, update *models.Up
 		s.reply(ctx, msg.Chat.ID, startFirst)
 		return
 	}
-	if !s.spaces.Load() {
-		s.reply(ctx, msg.Chat.ID, spacesUnsupported)
-		return
-	}
-	spaces, err := s.listSpaces(ctx, s.memos.WithAccessToken(accessToken))
+	spaces, err := s.memos.WithAccessToken(accessToken).ListSpaces(ctx)
 	if err != nil {
 		s.reply(ctx, msg.Chat.ID, spacesErrorText(err))
 		return
@@ -149,7 +129,7 @@ func (s *Service) handleSpace(ctx context.Context, _ *bot.Bot, update *models.Up
 func (s *Service) chooseDefaultSpace(ctx context.Context, query *models.CallbackQuery, client *memos.Client, key string) {
 	var space store.Space
 	if key != noSpaceKey {
-		spaces, err := s.listSpaces(ctx, client)
+		spaces, err := client.ListSpaces(ctx)
 		if err != nil {
 			s.alertSpacesError(ctx, query.ID, err)
 			return
@@ -187,7 +167,7 @@ func storedTitle(space store.Space) string {
 // space is returned so that the user can be told.
 func (s *Service) createInDefaultSpace(ctx context.Context, client *memos.Client, userID int64, content string) (*memosapi.Memo, store.Space, error) {
 	space := s.store.DefaultSpace(userID)
-	if space.Name == "" || !s.spaces.Load() {
+	if space.Name == "" {
 		memo, err := client.CreateMemo(ctx, memosapi.Memo{Content: content})
 		return memo, store.Space{}, err
 	}

@@ -29,12 +29,6 @@ func hasStatus(err error, codes ...int) bool {
 	return errors.As(err, &apiErr) && slices.Contains(codes, apiErr.StatusCode)
 }
 
-// isMissingEndpoint reports a server that does not implement the requested
-// endpoint.
-func isMissingEndpoint(err error) bool {
-	return hasStatus(err, http.StatusNotFound, http.StatusNotImplemented)
-}
-
 // RejectsSpace reports a create error that a missing, malformed or forbidden
 // space can cause. Memos reports a space the user is not a member of as not
 // found.

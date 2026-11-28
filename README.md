@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Memos service: latest (`main`/`canary`) or one of the two most recent stable series, currently **0.31.x and 26.10.x**
+- Memos service: latest (`main`/`canary`) or one of the two most recent stable series, currently **26.10.x and 26.11.x**
 - Telegram Bot
 
 Older Memos versions are outside the supported range. CI checks the latest image and the two stable releases with real Memos containers.
@@ -58,7 +58,7 @@ The `ALLOWED_USERNAMES` environment variable allows you to restrict bot usage to
 - Matching is case-insensitive and trims whitespace
 - Users outside the allowed list receive an error reply, including when they press a button on an earlier message.
 
-Memogram uses Memos' HTTP REST API. At startup it discovers `/api` (26.10 and later) or `/api/v1` (0.31) through the read-only instance profile endpoint.
+Memogram uses Memos' HTTP REST API. It calls the unversioned `/api` endpoints, so Memos 0.31 and earlier, which serve `/api/v1`, do not work.
 
 ## Usage
 
@@ -118,9 +118,9 @@ Update with `git pull --ff-only` followed by `sh scripts/build.sh compose up -d 
 - Send text messages: Save the message content as a memo.
 - Send photos, documents, voice messages, or videos: Save the files as attachments in a memo.
 - `/search <words>`: Search for the memos.
-- `/space`: Choose a default space for new memos, or "No space" to keep them private. Requires Memos 0.31 or later.
+- `/space`: Choose a default space for new memos, or "No space" to keep them private.
 
-Each saved memo gets buttons to make it public or private, to pin it, and, on Memos 0.31 or later, to move it into one of your spaces. A memo placed in a space gets `SPACE` visibility, so that the space's members can see it. "No space" takes it out again and makes a `SPACE` memo private.
+Each saved memo gets buttons to make it public or private, to pin it, and to move it into one of your spaces. A memo placed in a space gets `SPACE` visibility, so that the space's members can see it. "No space" takes it out again and makes a `SPACE` memo private.
 
 If your default space is deleted or you leave it, the next memo is saved without it, the bot tells you so, and the default is cleared.
 
@@ -142,7 +142,7 @@ Code layout:
 
 - `cmd/memogram`: the entrypoint. It loads the configuration and wires the store, the Memos client and the bot together.
 - `internal/bot`: the Telegram handlers for memo capture, attachments, albums, commands and memo buttons.
-- `internal/memos`: the Memos client and API version discovery, built on the generated `internal/memosapi`.
+- `internal/memos`: the Memos client, built on the generated `internal/memosapi`.
 - `internal/config`: environment configuration.
 - `internal/store`: the file that binds Telegram users to access tokens.
 - `internal/version`: build metadata.
@@ -153,14 +153,14 @@ To run the business compatibility scenarios, start a **fresh, disposable** Memos
 
 ```sh
 docker run --rm -d --name memogram-memos-test \
-  -e MEMOS_MODE=prod -p 127.0.0.1:5231:5230 neosmemo/memos:26.10.0
+  -e MEMOS_MODE=prod -p 127.0.0.1:5231:5230 neosmemo/memos:26.11.3
 MEMOS_TEST_URL=http://127.0.0.1:5231 go test -race -run '^TestMemosIntegration$' -count=1 -timeout=3m -v ./internal/bot
 docker rm -f memogram-memos-test
 ```
 
-CI runs the same scenarios against `canary` (latest development), `0.31.0`, and `26.10.0`, with the race detector enabled. Ordinary `go test` skips this integration test unless `MEMOS_TEST_URL` is set. The test creates an administrator for setup, then uses two ordinary users and their Personal Access Tokens for business operations. It refuses to run against an instance that already has users.
+CI runs the same scenarios against `canary` (latest development), `26.10.0`, and `26.11.3`, with the race detector enabled. Ordinary `go test` skips this integration test unless `MEMOS_TEST_URL` is set. The test creates an administrator for setup, then uses two ordinary users and their Personal Access Tokens for business operations. It refuses to run against an instance that already has users.
 
-The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; invalid or revoked tokens; and moving memos into and out of a space, the default space, and a default space that was deleted. Unit tests cover servers without spaces. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
+The scenarios cover text saving and search; documents and images with or without captions; images sent as documents; voice and video uploads; sequential and concurrent albums; partial attachment failures and recovery; visibility and pin buttons; user isolation; permission denial; invalid or revoked tokens; and moving memos into and out of a space, the default space, and a default space that was deleted. Uploaded files are downloaded from Memos and compared byte for byte. Images use a generated PNG; voice and video use small transport fixtures, without playback validation. Telegram responses are mocked; Memos API calls and file storage use the real server. An HTTP proxy injects the attachment service failure for the recovery scenario.
 
 Verify container startup and binding persistence separately:
 
