@@ -138,6 +138,8 @@ sh scripts/build.sh
 ./build/memogram --version
 ```
 
+`go test` includes the user journeys in `internal/bot/journey_test.go`, which run against an in-memory Memos and a mocked Telegram: linking an account, saving and searching notes, the buttons under a saved memo, photos, files and albums, default spaces and moving memos between them, a restart, two users sharing the bot, and startup through polling.
+
 Code layout:
 
 - `cmd/memogram`: the entrypoint. It loads the configuration and wires the store, the Memos client and the bot together.
