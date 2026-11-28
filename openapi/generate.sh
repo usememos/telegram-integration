@@ -11,5 +11,5 @@ for version in latest 26-10 26-11; do
 done
 
 mkdir -p internal/memosapi
-go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 \
+go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.9.0 \
   --config openapi/oapi-codegen.yaml openapi/latest.yaml

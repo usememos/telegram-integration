@@ -128,7 +128,7 @@ If an attachment cannot be downloaded or uploaded, the bot replies that the memo
 
 ## Development
 
-Requires Go 1.27.2 or newer. Linting uses [golangci-lint](https://golangci-lint.run) 2.15.0 with the settings in `.golangci.yml`; build it with that Go version or newer, for example `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`.
+Requires Go 1.27.4 or newer. Linting uses [golangci-lint](https://golangci-lint.run) 2.15.0 with the settings in `.golangci.yml`; build it with that Go version or newer, for example `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`.
 
 ```sh
 go test -race ./...
